@@ -84,6 +84,52 @@ Ręcznie malowana, stylizowana grafika fantasy (nowoczesny mobilny RPG), wyraźn
 - Konto lokalne przy skonfigurowanym serwerze gra offline (bez prób anonimowego logowania).
 - Walidacja na prawdziwym serwerze (`.preview/run-007`): rejestracja → bohater → status online „on” → wiersze w `saves` i `players` → wylogowanie + czysta przeglądarka → logowanie przywraca bohatera z serwera; arena online bez botów. Konto testowe usunięte z bazy.
 
+## Aktualizacja 8 – zgłoszenia z beta testów (wersja 1.8.0)
+Decyzje użytkownika: pety = **tylko bonusy pasywne** (widoczne przy bohaterze), mini gra weekendowa = **Koło fortuny**, po 150 poziomie = **zwykłe poziomy bez limitu**, finalizacja online = pełne konto, ochrona przed oszustwami, regulamin i RODO, moderacja czatu, ogłoszenia + wersja, **panel administratora** dla konta `madesio2309@gmail.com` z 3 eventami uruchamianymi ręcznie. Istniejące konta i postacie zostają (migracje tylko addytywne).
+
+### Asset Preparation (inwentarz)
+| Zasób | Użycie | Źródło | Ścieżka | Kontrola |
+|---|---|---|---|---|
+| 8 petów (Szlamek, Ognik, Sówka, Golemik, Kot Cienia, Smoczek, Pisklę Feniksa, Kryształowy Jednorożec), PNG z alfą | zakładka Pety, scena huba, lalka postaci, profil gracza | ai-model-calling (seedream5lite, remove_background) | public/assets/pets/*.webp (≤512 px) | arkusz `asset_src/gen8/check_sheet.jpg` – czyste krawędzie, styl zgodny z bohaterami |
+| Ikony: skrzynia mityczna, jajo peta, żeton fortuny | sklep, nagrody, koło | jw. | public/assets/icons/ui_16–18.webp | jw. |
+| Tło zbrojowni (16:9) | tło lalki w zakładce Postać | ai-model-calling | public/assets/bg/armory.jpg | podgląd – pusta podłoga w centrum pod postać |
+| Tło Otchłani (≈21:9) | walki w Nieskończonym Lochu, karta Otchłani | ai-model-calling | public/assets/bg/abyss.jpg | podgląd – platforma na pierwszym planie |
+| 10 efektów: hit, crit, magic, miss, coin, levelup, lose, click (zamiana) + tick, chest (nowe) | walka, UI, koło, skrzynie | ai-model-calling audio (AudioGen) + `asset_src/gen8/sfx/process_sfx.py` (przycięcie ciszy, wygaszenie ≥60 ms, normalizacja) | public/assets/audio/sfx_*.mp3 | obwiednia: koniec ≤ −33 dB (wcześniej crit/magic/miss 0 dB), fale `asset_src/gen8/sfx/wave/all.png` |
+| Koło fortuny, ramki rzadkości mitycznej, podgląd skórek | UI | proceduralnie (SVG/canvas/CSS – ten sam shader co scena przeliczany na canvasie) | src/ | — |
+
+### Dźwięk – przyczyna „urywania”
+1. Pliki SFX były wadliwe w źródle: generator zwrócił sztywne klipy 1–2 s ucięte w trakcie dźwięku (`crit`: drugi wybuch ucięty na końcu, `magic`/`miss` kończyły się przy 0 dB, `hit`/`click` to szum ok. −40 dB). Zastąpione nowymi, obrobionymi efektami.
+2. Odtwarzanie przez klonowanie `<audio>` przy każdym trafieniu (nowy element = ponowne dekodowanie, limity odtwarzaczy, na iOS przerywanie muzyki). Nowy silnik: Web Audio API – zdekodowane bufory, tor głośności *ogólna → muzyka / efekty*, limit głosów na dźwięk, płynne przejścia muzyki (crossfade 0,4–0,6 s zamiast `pause()`).
+3. Paski głośności: ogólna, muzyka, efekty (+ wyciszanie) – w ⚙ Ustawieniach i w szybkim panelu 🔊 na górnym pasku; zapis per urządzenie (`fho_audio_v1`).
+
+### Rozgrywka
+- **Poziomy bez limitu**: po 6. Przebudzeniu limit znika (151, 152…); EXP, przedmioty i przeciwnicy skalują się dalej. Serwer: `lvl` 1–100000.
+- **Nieskończony Loch „Otchłań”** (Lochy › Otchłań): 2000 pięter, od 100 poziomu, 15 kluczy Otchłani dziennie (1 walka = 1 klucz). Piętro f: poziom wroga 100 + ⌊0,45·f⌋, co 10. piętro boss. Nagrody: złoto/EXP co piętro; co 10: 5 💎 + epicki łup; co 50: jajo peta; co 100: legendarny łup + 50 💎 (od 500: 35% szans na mityczny); co 250 od 1000: gwarantowany mityczny; 500: skórka „Wędrowiec Otchłani”, 2000: tytuł i skórka „Władca Otchłani”. Ranking „Otchłań”.
+- **Rzadkość mityczna** (6.): mnożnik 3,1, 5 dodatkowych statystyk, 11 unikatowych przedmiotów z podwójnym efektem. **Skrzynia Mityczna** w sklepie: 2000 💎 → 90% legendarny, 10% mityczny.
+- **Pety** (Postać › Pety): 8 petów (rzadkości niezwykły→mityczny), jeden aktywny, bonus pasywny × (1 + 0,2·(poziom−1)), poziom 1–10 za duplikaty (duplikat na 10 poz. → 25 💎). Jaja: sklep 250 💎, Otchłań co 50 pięter, koło fortuny, prezent powitalny (1 jajo). Pet stoi obok bohatera w hubie, w lalce postaci i w profilu gracza.
+- **Koło fortuny** (sobota–niedziela lub event admina „Szczęśliwe Koło”): żetony za aktywność (przygoda, loch/Otchłań, arena, bossowie, misje) + 3 darmowe dziennie; 10 pól nagród (złoto, kryształy, energia, klucze, epicki/legendarny łup, jajo peta, jackpot 250 💎, Skrzynia Mityczna). Żetony wygasają po weekendzie.
+
+### Ekwipunek i wygląd
+- Porównanie po najechaniu (mysz): dymek z przedmiotem i obecnie założonym (+ zmiana siły); dotyk – bez zmian (dotknięcie otwiera okno porównania).
+- Podgląd ekwipunku innych graczy: okno „Profil gracza” (lalka z ekwipunkiem, statystyki, pet, skórka, gildia) z areny, rankingów, gildii, czatu i bossa; dane: nowa kolumna `players.equip` (zwięzły zapis 7 slotów, oczyszczany przy odczycie).
+- Podgląd skórek: miniatura bohatera w każdej skórce (canvas, ten sam algorytm co shader: odcień stroju, nasycenie, tint, poświata) + „Przymierz” – podgląd na scenie przez 8 s.
+- Tło zakładki Postać: obraz zbrojowni w lalce postaci (wcześniej ciemny gradient).
+
+### Finalizacja online
+- Konto: reset hasła e-mailem (obsługa linku odzyskiwania → „Ustaw nowe hasło”), potwierdzanie e-maila (obsługiwane w grze), zmiana e-maila, usunięcie konta (RPC `delete_my_account`, potwierdzenie hasłem). **Uwaga:** wbudowana poczta Supabase wysyła tylko do członków zespołu projektu (2/h) – wymaganie potwierdzenia pozostaje wyłączone na serwerze do czasu podpięcia własnego SMTP.
+- Ochrona: tabela `player_guard` (niedostępna dla graczy) + wyzwalacze: limity przyrostu poziomu, kryształów i pięter Otchłani w czasie („wiadro” odnawiające się), odrzucenie nierealnych zapisów; profil areny nie może przekroczyć zweryfikowanego poziomu, siła ograniczona względem poziomu; liczniki naruszeń widoczne w panelu admina.
+- Regulamin i Polityka prywatności (`src/data/legal.js`, wersja dokumentów), wymagana zgoda przy rejestracji (zapis wersji i daty w metadanych konta).
+- Moderacja czatu: filtr wulgaryzmów (klient + serwer), zgłaszanie wiadomości, wyciszanie graczy (lokalnie), blokady czatu nadawane przez admina (`chat_bans`).
+- Ogłoszenia (`announcements`) na ekranie startowym i w grze, numer wersji, okno „Co nowego” po aktualizacji (`src/version.js`).
+- **Panel administratora** (przycisk 🛡 tylko dla `madesio2309@gmail.com`; uprawnienia wymuszane przez serwer funkcją `is_admin()` i tabelą `admins`): eventy, ogłoszenia, zgłoszenia czatu (usuń / zablokuj), gracze (szukaj, profil, blokada czatu, flagi ochrony), statystyki. Eventy (`live_events`): **Festiwal Doświadczenia** (2× EXP), **Złoty Deszcz** (2× złoto, 2× szansa na lepsze łupy), **Szczęśliwe Koło** (koło fortuny poza weekendem, 2× żetony, 5 darmowych dziennie); czas trwania 1–48 h, możliwość zatrzymania.
+- UI fingerprint: kontynuacja stylu sitodruku – nowe okna (profil, koło, panel admina, dokumenty) jako papierowe karty z konturem i twardym cieniem; koło fortuny w paletach tuszu (czerwień/indygo/papier/złoto) z czerwonym wskaźnikiem; rzadkość mityczna = karmin `#FF3D6E` z pulsującą cyjanową obwódką; plakietka eventu na górnym pasku jako pas złotego tuszu.
+
+### Weryfikacja 1.8
+- Testy: `npm test` (online, konta + wymagana zgoda, `update8_test` – 56 asercji: poziomy bez limitu, Otchłań, Skrzynia Mityczna ≈10%, pety, koło fortuny, eventy, moderacja, oczyszczanie profili innych graczy; Przebudzenia; balans) – wszystkie OK; `vite build` OK; brak zewnętrznych adresów zasobów w buildzie.
+- Przeglądarka (`.preview/run-008`): rejestracja bez/z zgodą, poziom 160, skrzynia mityczna, porównanie po najechaniu, tło zbrojowni, pet na scenie i na lalce, wykluwanie, podgląd/przymierzanie skórek, Otchłań (walka z tłem), koło fortuny z eventem, suwaki głośności (zapis), profil gracza, Regulamin/Polityka; dźwięk w walce: kontekst aktywny, maks. 2 głosy jednocześnie.
+- Serwer: zapis eventów/ogłoszeń i statystyki admina bez uprawnień → 401; publiczny odczyt eventów/ogłoszeń działa.
+- Poprawki z walidacji: helper `fill()` (natywne `replaceChildren` wypisywało „null”), widoczny przycisk Sklep na ciemnym pasku, znaczniki eventów bez zawijania paska, ikona głośności.
+
 ## Kryteria ukończenia
 - Kreator postaci (5 klas, wygląd, kolor stroju, aura), hub z animowaną postacią.
 - Walka auto 1v1 10–20 s z animacją, kryty, uniki, umiejętności, przycisk „Pomiń”, porównanie siły.

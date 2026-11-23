@@ -134,4 +134,6 @@ export const SKINS = {
   cosmic: { name: 'Kosmiczny', desc: 'Za pokonanie Tytana Pustki (loch 10).', tint: [0.85, 0.75, 1.25], sat: 1.25, glow: '#c38bff', cost: 0, src: 'dungeon' },
   event: { name: 'Łowca Smoków', desc: 'Nagroda wydarzenia tygodniowego.', tint: [1.1, 0.9, 0.8], sat: 1.2, glow: '#ff9c3d', cost: 0, src: 'event' },
   awakened: { name: 'Przebudzony', desc: 'Za ukończenie wszystkich 6 Przebudzeń.', tint: [1.05, 1.0, 1.2], sat: 1.15, glow: '#9fe8ff', cost: 0, src: 'awaken' },
+  abyss: { name: 'Wędrowiec Otchłani', desc: 'Za zdobycie 500. piętra Otchłani.', tint: [0.9, 0.72, 1.18], sat: 1.2, glow: '#d14dff', cost: 0, src: 'abyss' },
+  abyssLord: { name: 'Władca Otchłani', desc: 'Za zdobycie 2000. piętra Otchłani.', tint: [1.2, 0.62, 0.78], sat: 1.3, glow: '#ff3d6e', cost: 0, src: 'abyss' },
 };

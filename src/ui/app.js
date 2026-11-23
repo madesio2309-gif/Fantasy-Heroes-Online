@@ -1,16 +1,23 @@
 // Główna aplikacja: ekrany, układ, nawigacja, modale, hub
 import { Stage, loadTex, loadAnimMeta, GROUND_Y } from '../render/stage.js';
-import { h, $, icon, uiIcon, itemSlotEl, itemDetails, bar, heroLook, btn } from './dom.js';
-import { preloadAudio, sfx, playMusic, setMusic, setSound, audioState } from './audio.js';
+import { h, $, icon, uiIcon, itemSlotEl, itemDetails, bar, heroLook, btn, fill } from './dom.js';
+import { preloadAudio, sfx, playMusic, setMusic, setSound, audioState, getVolumes, audioDebug } from './audio.js';
 import { BattlePlayer } from './battle.js';
 import { Tutorial } from './tutorial.js';
 import { initItemDrag } from './dragdrop.js';
+import { initItemTooltip } from './tooltip.js';
 import { renderTab, TABS } from './tabs.js';
 import * as Panels from './panels.js';
+import { openWheel } from './wheel.js';
+import { openAdmin } from './admin.js';
+import { openDocs, openChangelog, newsView } from './info.js';
 import * as G from '../core/game.js';
 import * as Acc from '../core/accounts.js';
-import { CLASSES, CLASS_ORDER, SKILLS, OUTFIT_HUES, AURA_COLORS, outfitSwatch } from '../data/classes.js';
+import { CLASSES, CLASS_ORDER, SKILLS, OUTFIT_HUES, AURA_COLORS, SKINS, outfitSwatch } from '../data/classes.js';
 import { RARITIES, SLOT_NAMES } from '../data/items.js';
+import { PETS, PET_BY_ID } from '../data/pets.js';
+import { LIVE_EVENTS } from '../data/live.js';
+import { APP_VERSION } from '../version.js';
 import { fmt, fmtTime, R } from '../core/util.js';
 import { upgradeCost, sellPrice, buyPrice, MAX_UP } from '../core/formulas.js';
 
@@ -40,17 +47,20 @@ export class App {
     G.on('levelup', (l, sk) => this.levelUp(l, sk));
     G.on('sfx', (s) => sfx(s));
     G.on('chat', () => { if (this.chatEl) Panels.refreshChat(this); });
+    Acc.onAcc((t) => { if (t === 'recovery') this.openRecovery(); });
     this.stage.onResize = () => this.placeHero();
+    initItemTooltip();
   }
   P() { return G.P; }
 
   // ——— Start / ładowanie ———
   async boot() {
     preloadAudio();
-    const bgs = ['hub', 'forest', 'swamp', 'volcano', 'desert', 'dungeon', 'arena', 'guildhall'];
+    const bgs = ['hub', 'forest', 'swamp', 'volcano', 'desert', 'dungeon', 'arena', 'guildhall', 'abyss'];
     const heroes = CLASS_ORDER.flatMap((c) => CLASSES[c].looks.map((l) => `heroes/${l}.webp`));
     const anims = CLASS_ORDER.flatMap((c) => CLASSES[c].looks.map((l) => `anims/atk_${l}.webp`));
-    const list = [...bgs.map((b) => `bg/${b}.jpg`), ...heroes, ...anims];
+    const pets = PETS.map((p) => `pets/${p.img}.webp`);
+    const list = [...bgs.map((b) => `bg/${b}.jpg`), ...heroes, ...anims, ...pets];
     loadAnimMeta();
     let done = 0;
     this.renderStart(0, list.length);
@@ -82,12 +92,17 @@ export class App {
         h('div', { class: 'load' },
           h('div', { class: 'load-segs' }, Array.from({ length: segs }, () => h('i'))),
           h('div', { class: 'load-txt' }, 'Wczytywanie świata… 0%')),
-        h('div', { class: 'start-actions' })),
+        h('div', { class: 'start-actions' }),
+        h('div', { class: 'start-news', id: 'start-news' })),
       h('div', { class: 'start-rules' },
-        h('div', { class: 'rule' }, h('b', {}, 'Cel'), 'Rozwiń bohatera do 100 poziomu, przejdź 6 Przebudzeń aż do 150 i zostań legendą rankingu.'),
+        h('div', { class: 'rule' }, h('b', {}, 'Cel'), 'Rozwijaj bohatera bez limitu poziomów: 6 Przebudzeń (100–150), potem Otchłań z 2000 piętrami i szczyty rankingów.'),
         h('div', { class: 'rule' }, h('b', {}, 'Przygody'), 'Wybierz 1 z 3 zleceń (1–10 min) → odbierz łupy, nawet offline.'),
-        h('div', { class: 'rule' }, h('b', {}, 'Walka'), 'Pojedynki toczą się same — Ty decydujesz o ekwipunku, statystykach i talentach.'),
+        h('div', { class: 'rule' }, h('b', {}, 'Walka'), 'Pojedynki toczą się same — Ty decydujesz o ekwipunku, statystykach, talentach i pecie.'),
         h('div', { class: 'rule' }, h('b', {}, 'Sterowanie'), 'Klik / dotyk. 5 zakładek na dole ekranu.')),
+      h('div', { class: 'start-foot' },
+        h('button', { class: 'linkbtn', onclick: () => openDocs(this, 'terms') }, 'Regulamin'), ' · ',
+        h('button', { class: 'linkbtn', onclick: () => openDocs(this, 'privacy') }, 'Polityka prywatności'), ' · ',
+        h('span', {}, `v${APP_VERSION}`)),
     );
     this.root.append(this.startEl);
   }
@@ -103,7 +118,7 @@ export class App {
   }
   async afterLoad() {
     const acts = this.startEl.querySelector('.start-actions');
-    acts.replaceChildren(h('div', { class: 'acc-note' }, 'Sprawdzanie konta…'));
+    fill(acts, h('div', { class: 'acc-note' }, 'Sprawdzanie konta…'));
     try { await Acc.restore(); } catch (e) {
       console.error('Przywracanie sesji konta nieudane', e);
       this.toast('Nie udało się sprawdzić konta: ' + e.message, 'bad');
@@ -112,6 +127,13 @@ export class App {
     this.renderStartActions();
     const flash = sessionStorage.getItem('fho_flash');
     if (flash) { sessionStorage.removeItem('fho_flash'); this.toast(flash, 'good'); }
+    // ogłoszenia i eventy widoczne także przed zalogowaniem
+    if (G.Net.getConfig()) G.Net.loadPublic().then(() => this.renderStartNews()).catch((e) => console.error('Ogłoszenia', e));
+  }
+  renderStartNews() {
+    const box = this.startEl && this.startEl.querySelector('#start-news');
+    if (!box) return;
+    box.replaceChildren(newsView(G.Net.Net.news, G.Net.Net.live, { compact: true }) || '');
   }
   // ——— Konto gracza na ekranie startowym ———
   renderStartActions() {
@@ -120,7 +142,7 @@ export class App {
     const u = Acc.Acc.user;
     if (u) {
       const has = G.hasSave();
-      acts.replaceChildren(
+      fill(acts, 
         h('div', { class: 'acc-pill', id: 'acc-pill' }, uiIcon('key', 'acc-ico'),
           h('div', {}, h('small', {}, u.mode === 'cloud' ? 'Konto online' : 'Konto w tej przeglądarce'), h('b', {}, u.login))),
         has ? btn('Graj', () => this.enter(), 'primary big', { id: 'btn-play' })
@@ -131,7 +153,7 @@ export class App {
       return;
     }
     const guest = Acc.guestInfo();
-    acts.replaceChildren(
+    fill(acts, 
       btn('Zaloguj się', () => this.openAuth('login'), 'primary big', { id: 'btn-login' }),
       btn('Załóż konto', () => this.openAuth('register'), '', { id: 'btn-register' }),
       h('div', { class: 'acc-note' }, Acc.cloudAvailable()
@@ -154,6 +176,7 @@ export class App {
     const pw = h('input', { class: 'inp', id: 'auth-pass', type: 'password', autocomplete: reg ? 'new-password' : 'current-password', placeholder: `min. ${Acc.MIN_PASSWORD} znaków`, required: true });
     const pw2 = reg ? h('input', { class: 'inp', id: 'auth-pass2', type: 'password', autocomplete: 'new-password', placeholder: 'powtórz hasło', required: true }) : null;
     const attach = guest ? h('input', { type: 'checkbox', id: 'auth-attach', checked: true }) : null;
+    const consent = reg ? h('input', { type: 'checkbox', id: 'auth-consent' }) : null;
     const err = h('div', { class: 'auth-err', id: 'auth-err', role: 'alert' });
     const submit = btn(label, null, 'primary big', { id: 'auth-go', type: 'submit' });
     const go = async () => {
@@ -163,7 +186,7 @@ export class App {
       try {
         const data = { login: idInp.value, password: pw.value, mode, attach: attach ? attach.checked : false };
         if (reg) {
-          const r = await Acc.register({ ...data, password2: pw2.value });
+          const r = await Acc.register({ ...data, password2: pw2.value, consent: consent.checked });
           if (r.needConfirm) { this.authConfirm(r.email); return; }
           this.toast('Konto utworzone – witaj w świecie gry!', 'good');
         } else {
@@ -181,15 +204,19 @@ export class App {
     };
     const tabBtn = (t, txt) => h('button', { type: 'button', class: 'chip' + (t === tab ? ' sel' : ''), id: 'auth-tab-' + t, onclick: () => this.openAuth(t, mode) }, txt);
     const modeBtn = (m, txt) => h('button', { type: 'button', class: 'chip small' + (m === mode ? ' sel' : ''), onclick: () => this.openAuth(tab, m) }, txt);
-    acts.replaceChildren(h('form', { class: 'auth', id: 'auth-form', novalidate: true, onsubmit: (e) => { e.preventDefault(); go(); } },
+    fill(acts, h('form', { class: 'auth', id: 'auth-form', novalidate: true, onsubmit: (e) => { e.preventDefault(); go(); } },
       h('div', { class: 'auth-tabs' }, tabBtn('login', 'Logowanie'), tabBtn('register', 'Rejestracja')),
       Acc.cloudAvailable() ? h('div', { class: 'auth-mode' }, modeBtn('cloud', 'Konto online (e-mail)'), modeBtn('local', 'Konto lokalne (offline)')) : null,
       h('label', { class: 'lbl', for: 'auth-login' }, cloud ? 'Adres e-mail' : 'Login'), idInp,
       h('label', { class: 'lbl', for: 'auth-pass' }, 'Hasło'), pw,
       reg ? [h('label', { class: 'lbl', for: 'auth-pass2' }, 'Powtórz hasło'), pw2] : null,
       attach ? h('label', { class: 'toggle auth-attach' }, attach, ` Przypisz bohatera ${guest.name} (poz. ${guest.lvl}) do tego konta`) : null,
+      consent ? h('label', { class: 'toggle auth-attach' }, consent, ' Akceptuję ',
+        h('button', { type: 'button', class: 'linkbtn', onclick: () => openDocs(this, 'terms') }, 'Regulamin'), ' i ',
+        h('button', { type: 'button', class: 'linkbtn', onclick: () => openDocs(this, 'privacy') }, 'Politykę prywatności'), '.') : null,
       err,
       submit,
+      !reg && cloud ? h('button', { type: 'button', class: 'linkbtn auth-forgot', id: 'auth-forgot', onclick: () => this.openForgot(idInp.value) }, 'Nie pamiętam hasła') : null,
       h('div', { class: 'auth-foot' },
         h('span', { class: 'muted' }, cloud ? 'Hasło przechowuje bezpiecznie serwer gry.' : 'Konto lokalne działa tylko w tej przeglądarce.'),
         btn('Wróć', () => { sfx('click'); this.renderStartActions(); }, 'ghost small', { type: 'button' }))));
@@ -197,10 +224,45 @@ export class App {
   }
   authConfirm(email) {
     const acts = this.startEl.querySelector('.start-actions');
-    acts.replaceChildren(h('div', { class: 'auth' },
+    fill(acts, h('div', { class: 'auth' },
       h('b', { class: 'auth-title' }, 'Potwierdź adres e-mail'),
       h('p', {}, `Wysłaliśmy link aktywacyjny na adres ${email}. Kliknij go w wiadomości, a następnie zaloguj się tutaj.`),
       btn('Przejdź do logowania', () => this.openAuth('login', 'cloud'), 'primary', { type: 'button' })));
+  }
+  // „Nie pamiętam hasła”: link resetujący wysyła serwer gry
+  openForgot(prefill = '') {
+    const acts = this.startEl.querySelector('.start-actions');
+    const email = h('input', { class: 'inp', id: 'forgot-email', type: 'email', autocomplete: 'email', placeholder: 'adres e-mail konta', value: prefill });
+    const err = h('div', { class: 'auth-err', role: 'alert' });
+    const send = btn('Wyślij link do zmiany hasła', null, 'primary', { type: 'submit', id: 'forgot-go' });
+    fill(acts, h('form', { class: 'auth', novalidate: true, onsubmit: async (e) => {
+      e.preventDefault();
+      err.textContent = ''; send.disabled = true;
+      try {
+        await Acc.requestPasswordReset(email.value);
+        fill(acts, h('div', { class: 'auth' }, h('b', { class: 'auth-title' }, 'Sprawdź skrzynkę'),
+          h('p', {}, `Jeśli konto ${email.value.trim()} istnieje, wysłaliśmy na nie link do ustawienia nowego hasła. Link otworzy grę – tam wpiszesz nowe hasło.`),
+          btn('Wróć do logowania', () => this.openAuth('login', 'cloud'), 'primary', { type: 'button' })));
+      } catch (ex) { err.textContent = ex.message; send.disabled = false; }
+    } },
+    h('b', { class: 'auth-title' }, 'Reset hasła'),
+    h('p', { class: 'muted' }, 'Podaj adres e-mail konta – wyślemy link do ustawienia nowego hasła.'),
+    email, err, send,
+    h('div', { class: 'auth-foot' }, h('span'), btn('Wróć', () => this.openAuth('login', 'cloud'), 'ghost small', { type: 'button' }))));
+    setTimeout(() => email.focus(), 50);
+  }
+  // wejście z linku „reset hasła”: ustawienie nowego hasła
+  openRecovery() {
+    const p1 = h('input', { class: 'inp', id: 'rec-pass', type: 'password', autocomplete: 'new-password', placeholder: `nowe hasło (min. ${Acc.MIN_PASSWORD} znaków)` });
+    const p2 = h('input', { class: 'inp', id: 'rec-pass2', type: 'password', autocomplete: 'new-password', placeholder: 'powtórz nowe hasło' });
+    const err = h('div', { class: 'auth-err', role: 'alert' });
+    let m;
+    const go = btn('Ustaw nowe hasło', async () => {
+      err.textContent = ''; go.disabled = true;
+      try { await Acc.setNewPassword(p1.value, p2.value); m.close(); this.toast('Nowe hasło zapisane – jesteś zalogowany.', 'good'); }
+      catch (e) { err.textContent = e.message; go.disabled = false; }
+    }, 'primary', { id: 'rec-go' });
+    m = this.modal('Ustaw nowe hasło', h('div', { class: 'settings' }, h('div', { class: 'muted' }, `Konto: ${Acc.Acc.user?.email || ''}`), p1, p2, err, go), { cls: 'narrow' });
   }
   async newCharacter() {
     if (!confirm('Usunąć obecną postać i zacząć od nowa? Tego nie można cofnąć.')) return;
@@ -251,7 +313,7 @@ export class App {
     const c = this.cr;
     const C = CLASSES[c.cls];
     const el = this.creatorEl;
-    el.replaceChildren(
+    fill(el, 
       h('div', { class: 'cr-panel' },
         h('h2', {}, 'Stwórz bohatera'),
         h('label', { class: 'lbl' }, 'Imię'),
@@ -284,7 +346,6 @@ export class App {
   async enter(fresh = false) {
     sfx('click');
     if (!G.P && !G.load()) { this.startCreator(); return; }
-    audioState.music = G.P.settings.music; audioState.sound = G.P.settings.sound;
     playMusic('hub');
     if (this.startEl) { this.startEl.classList.add('leave'); setTimeout(() => this.startEl?.remove(), 300); }
     this.clearShowcase();
@@ -301,10 +362,15 @@ export class App {
     else if (cfg) G.connectOnline(cfg).then(() => this.toast('Połączono ze wspólnym światem gry!', 'good')).catch((e) => this.toast('Nie udało się połączyć z serwerem – grasz offline (arena, gildie i czat niedostępne). (' + e.message + ')', 'bad'));
     // powitanie: samouczek dla nowych graczy, w przeciwnym razie offline idle + logowanie
     setTimeout(() => {
-      if (this.tutorial.active) { this.tutorial.start(); return; }
-      if (!G.P.login.claimed) Panels.openDaily(this);
-      else { const p = G.idlePending(); if (p.ms > 30 * 60000) Panels.openIdle(this); }
-      if (G.P.seasonRewards.length) Panels.openSeasonReward(this);
+      if (this.tutorial.active) { G.markVersionSeen(APP_VERSION); this.tutorial.start(); return; }
+      const welcome = () => {
+        if (!G.P.login.claimed) Panels.openDaily(this);
+        else { const p = G.idlePending(); if (p.ms > 30 * 60000) Panels.openIdle(this); }
+        if (G.P.seasonRewards.length) Panels.openSeasonReward(this);
+      };
+      // po aktualizacji: najpierw „Co nowego”
+      if (G.P.seenVersion !== APP_VERSION && G.P.seenVersion !== 'new') { G.markVersionSeen(APP_VERSION); openChangelog(this, welcome); }
+      else { if (G.P.seenVersion === 'new') G.markVersionSeen(APP_VERSION); welcome(); }
     }, 600);
   }
   buildGame() {
@@ -332,7 +398,7 @@ export class App {
   async _refreshHero() {
     if (!G.P || this.inBattle) return;
     const tier = G.appearanceTier();
-    const look = heroLook(G.P, tier);
+    const look = heroLook(this.skinTry ? { ...G.P, skin: this.skinTry } : G.P, tier);
     const key = look.path;
     if (!this.hero || this.hero.path !== key) {
       const old = this.hero;
@@ -343,13 +409,35 @@ export class App {
     }
     this.hero.setLook(look);
     this.stage.setAura(this.hero, look.aura, tier);
+    // aktywny pet stoi obok bohatera
+    const pet = G.P.pets && G.P.pets.active && PET_BY_ID[G.P.pets.active];
+    const petPath = pet ? `pets/${pet.img}.webp` : null;
+    if (this.petActor && this.petActor.path !== petPath) { this.stage.removeActor(this.petActor); this.petActor = null; }
+    if (petPath && !this.petActor) {
+      const pa = await this.stage.addActor(petPath, 190, { breath: 0.03 });
+      pa.path = petPath;
+      if (this.inBattle || !G.P.pets.active) this.stage.removeActor(pa);
+      else this.petActor = pa;
+    }
     this.placeHero();
+  }
+  // podgląd skórki na scenie przez kilka sekund
+  trySkin(id) {
+    if (!SKINS[id]) return;
+    this.skinTry = id;
+    clearTimeout(this._skinT);
+    this.refreshHero();
+    this.toast(`Przymierzasz: ${SKINS[id].name} (8 s)`);
+    if (window.innerWidth <= 820) { this.panelOpen = false; document.body.classList.remove('panel-open'); this.render(); }
+    this._skinT = setTimeout(() => { this.skinTry = null; this.refreshHero(); }, 8000);
   }
   placeHero() {
     if (this.prevActor) this.prevActor.setPos(this.creatorX(), GROUND_Y);
     if (!this.hero || this.inBattle) return;
     const wide = this.stage.width >= 1250 && window.innerWidth > 820;
-    this.hero.setPos(wide && this.panelOpen ? -this.stage.width * 0.2 : 0, GROUND_Y);
+    const x = wide && this.panelOpen ? -this.stage.width * 0.2 : 0;
+    this.hero.setPos(x, GROUND_Y);
+    if (this.petActor) { this.petActor.setPos(x - 230 * this.stage.charScale, GROUND_Y); this.petActor.mesh.position.z = 0.5; }
   }
   heroClick(e) {
     if (!this.hero || this.inBattle) return;
@@ -411,23 +499,49 @@ export class App {
   renderTop() {
     const P = G.P;
     const need = G.expNext(P.lvl);
-    const maxed = P.lvl >= G.MAX_LVL;
     const capped = G.expBlocked();
-    const expTxt = maxed ? 'MAKS' : capped && P.exp >= need ? 'Wymagane Przebudzenie!' : `${fmt(P.exp)} / ${fmt(need)} EXP${capped ? ' · próg' : ''}`;
+    const expTxt = capped && P.exp >= need ? 'Wymagane Przebudzenie!' : `${fmt(P.exp)} / ${fmt(need)} EXP${capped ? ' · próg' : ''}`;
     const energyTimer = P.energy < G.ENERGY_MAX ? fmtTime(6 * 60000 - (Date.now() - P.energyT)) : 'pełna';
-    this.top.replaceChildren(
+    const live = G.activeLive();
+    const vol = getVolumes();
+    const muted = !vol.musicOn && !vol.sfxOn || vol.master === 0;
+    fill(this.top, 
       h('div', { class: 'tb-hero' + (capped ? ' capped' : ''), title: capped ? 'Próg Przebudzenia – pokonaj bossa Próby (Postać → Przebudzenie)' : '', onclick: () => { if (capped) this.sub.character = 'awaken'; this.openTab('character'); } },
         h('div', { class: 'tb-lvl' }, P.lvl),
         h('div', { class: 'tb-info' }, h('div', { class: 'tb-name' }, P.name, h('span', { class: 'tb-cls' }, CLASSES[P.cls].name), P.awak ? h('span', { class: 'tb-awk' }, `✦${P.awak}`) : null),
-          h('div', { class: 'tb-exp' }, bar(maxed ? 1 : P.exp / need, capped ? 'exp capped' : 'exp'), h('span', {}, expTxt)))),
+          h('div', { class: 'tb-exp' }, bar(P.exp / need, capped ? 'exp capped' : 'exp'), h('span', {}, expTxt)))),
+      live.length ? h('div', { class: 'tb-live' }, live.map((e) => {
+        const ev = LIVE_EVENTS[e.kind];
+        return h('button', { class: 'live-badge', style: { background: ev.color }, title: `${ev.name}: ${ev.desc}`, onclick: () => (e.kind === 'wheel' ? openWheel(this) : this.toast(`${ev.name}: ${ev.desc}`)) },
+          '⚡ ', ev.short, h('small', {}, ' ' + fmtTime(new Date(e.ends_at).getTime() - Date.now())));
+      })) : null,
       h('div', { class: 'tb-res' },
         h('div', { class: 'res', title: 'Siła postaci' }, uiIcon('swords', 'ico'), h('b', {}, fmt(G.power()))),
         h('div', { class: 'res', title: 'Złoto' }, uiIcon('gold', 'ico'), h('b', {}, fmt(P.gold))),
         h('div', { class: 'res', title: 'Kryształy (darmowa waluta premium – zdobywana w grze)', onclick: () => Panels.openShop(this, 'crystal') }, uiIcon('crystal', 'ico'), h('b', {}, fmt(P.crystals))),
         h('div', { class: 'res', title: `Energia przygód (odnowa: ${energyTimer})` }, uiIcon('energy', 'ico'), h('b', {}, `${P.energy}/${G.ENERGY_MAX}`)),
         h('button', { class: 'res set net', title: G.Net.isOnline() ? 'Tryb online – wspólny świat' : 'Offline – podłącz serwer w ustawieniach', onclick: () => Panels.openSettings(this) }, G.Net.isOnline() ? h('span', { class: 'online-dot' }) : '○', ' ', G.Net.isOnline() ? 'Online' : 'Offline'),
+        Acc.isAdminUser() ? h('button', { class: 'res set admin', title: 'Panel administratora', id: 'btn-admin', onclick: () => openAdmin(this) }, '🛡') : null,
+        h('button', { class: 'res set', title: 'Głośność', id: 'btn-volume', onclick: (e) => this.toggleVolume(e.currentTarget) }, muted ? '🔇' : '🔊'),
         h('button', { class: 'res set', title: 'Ustawienia', onclick: () => Panels.openSettings(this) }, '⚙')),
     );
+    if (this.volPop && this.volPop.isConnected) this.placeVolume();
+  }
+  // szybki panel głośności pod przyciskiem 🔊
+  toggleVolume(anchor) {
+    if (this.volPop && this.volPop.isConnected) { this.volPop.remove(); this.volPop = null; return; }
+    const pop = h('div', { class: 'vol-pop', id: 'vol-pop' }, h('b', {}, 'Głośność'), Panels.audioControls());
+    this.volPop = pop;
+    this.root.append(pop);
+    this.placeVolume();
+    const outside = (e) => { if (!pop.contains(e.target) && !e.target.closest('#btn-volume')) { pop.remove(); this.volPop = null; document.removeEventListener('pointerdown', outside, true); } };
+    setTimeout(() => document.addEventListener('pointerdown', outside, true), 0);
+  }
+  placeVolume() {
+    const b = this.top.querySelector('#btn-volume');
+    if (!b || !this.volPop) return;
+    const r = b.getBoundingClientRect();
+    Object.assign(this.volPop.style, { top: r.bottom + 8 + 'px', right: Math.max(8, window.innerWidth - r.right) + 'px' });
   }
   renderQuick() {
     const P = G.P;
@@ -435,12 +549,14 @@ export class App {
     const dailyReady = P.daily.missions.filter((m) => m.prog >= m.goal && !m.claimed).length + (!P.login.claimed ? 1 : 0) + (G.allMissionsDone() && !P.daily.chest ? 1 : 0);
     const ev = G.currentEvent();
     const evReady = G.EVENT_TIERS.filter((t, i) => P.event.points >= t && !P.event.claimed.includes(i)).length;
-    const q = (ic, label, fn, badge, extra) => h('button', { class: 'qbtn', onclick: () => { sfx('click', 0.4); fn(); } }, uiIcon(ic, 'qico'), h('span', { class: 'qlbl' }, label), badge ? h('i', { class: 'badge on' }, badge) : null, extra || null);
-    this.quick.replaceChildren(
+    const wh = G.wheelState();
+    const q = (ic, label, fn, badge, extra, cls = '') => h('button', { class: 'qbtn ' + cls, onclick: () => { sfx('click', 0.4); fn(); } }, uiIcon(ic, 'qico'), h('span', { class: 'qlbl' }, label), badge ? h('i', { class: 'badge on' }, badge) : null, extra || null);
+    fill(this.quick, 
       q('hourglass', 'Idle', () => Panels.openIdle(this), idle.gold > 0 ? '•' : '', h('span', { class: 'qsub', id: 'q-idle' }, `${fmt(idle.gold)} zł`)),
       q('scroll', 'Dzienne', () => Panels.openDaily(this), dailyReady || ''),
       q('chest', 'Sklep', () => Panels.openShop(this)),
       q('star', ev.name, () => Panels.openEvent(this), evReady || ''),
+      q('token', 'Koło fortuny', () => openWheel(this), wh.active ? (wh.tokens || (wh.freeReady ? '!' : '')) : '', wh.active ? null : h('span', { class: 'qsub' }, 'w weekend'), wh.active ? 'hot' : 'off'),
       q('trophy', 'Rankingi', () => Panels.openRankings(this)),
       q('guild', 'Czat', () => Panels.openChat(this), ''),
     );
@@ -453,6 +569,9 @@ export class App {
     this.renderTop();
     const qi = $('#q-idle'); if (qi) qi.textContent = `${fmt(G.idlePending().gold)} zł`;
     if (this.live) this.live();
+    // pet co kilka sekund podskakuje obok bohatera
+    const pa = this.petActor;
+    if (pa && Date.now() % 6000 < 1000) this.stage.tween(pa, 'offY', 26, 0.18, undefined, () => { if (this.petActor === pa) this.stage.tween(pa, 'offY', 0, 0.26); });
     this.nav.querySelectorAll('.nav-btn').forEach((b) => { b.querySelector('.badge').textContent = this.badge(b.dataset.tab) || ''; });
     if (Date.now() % 15000 < 1000) G.save();
   }
@@ -467,6 +586,7 @@ export class App {
     document.body.classList.add('in-battle');
     this.closeModals();
     if (this.hero) { this.stage.removeActor(this.hero); this.hero = null; }
+    if (this.petActor) { this.stage.removeActor(this.petActor); this.petActor = null; }
     try {
       await this.battle.play(spec);
     } catch (e) {

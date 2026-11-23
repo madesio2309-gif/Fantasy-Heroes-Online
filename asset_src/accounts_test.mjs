@@ -14,11 +14,12 @@ const L = 'local';
 if (Net.getConfig()) Net.setClientForTests(Net.getConfig(), fakeSupabase().client);
 
 // ——— Konta lokalne ———
-await rejects(() => A.register({ login: 'ab', password: 'tajne123', password2: 'tajne123', mode: L }), /Login/, 'za krótki login odrzucony');
-await rejects(() => A.register({ login: 'zbyszko', password: '123', password2: '123', mode: L }), /co najmniej 6/, 'za krótkie hasło odrzucone');
-await rejects(() => A.register({ login: 'zbyszko', password: 'tajne123', password2: 'tajne124', mode: L }), /nie są takie same/, 'różne hasła odrzucone');
+await rejects(() => A.register({ consent: true, login: 'ab', password: 'tajne123', password2: 'tajne123', mode: L }), /Login/, 'za krótki login odrzucony');
+await rejects(() => A.register({ consent: true, login: 'zbyszko', password: '123', password2: '123', mode: L }), /co najmniej 6/, 'za krótkie hasło odrzucone');
+await rejects(() => A.register({ consent: true, login: 'zbyszko', password: 'tajne123', password2: 'tajne124', mode: L }), /nie są takie same/, 'różne hasła odrzucone');
 
-const r1 = await A.register({ login: 'Zbyszko', password: 'tajne123', password2: 'tajne123', mode: L });
+await rejects(() => A.register({ login: 'zbyszko', password: 'tajne123', password2: 'tajne123', mode: L }), /Regulamin/, 'rejestracja bez zgody na Regulamin odrzucona');
+const r1 = await A.register({ consent: true, login: 'Zbyszko', password: 'tajne123', password2: 'tajne123', mode: L });
 assert(r1.user.login === 'Zbyszko' && A.Acc.user.mode === 'local', 'rejestracja konta lokalnego');
 assert(G.saveSlot().endsWith(':l:zbyszko') && !G.hasSave(), 'konto ma własny, pusty slot zapisu');
 assert(!localStorage.getItem('fho_accounts_v1').includes('tajne123'), 'hasło nie jest zapisane jawnym tekstem');
@@ -27,13 +28,13 @@ G.P.gold = 777; G.save();
 assert(G.hasSave() && !localStorage.getItem(G.GUEST_SAVE_KEY), 'bohater zapisany w slocie konta');
 await A.logout();
 assert(A.Acc.user === null && G.saveSlot() === G.GUEST_SAVE_KEY && G.P === null, 'wylogowanie czyści sesję');
-await rejects(() => A.register({ login: 'ZBYSZKO', password: 'inne123', password2: 'inne123', mode: L }), /zajęty/, 'login zajęty (bez względu na wielkość liter)');
+await rejects(() => A.register({ consent: true, login: 'ZBYSZKO', password: 'inne123', password2: 'inne123', mode: L }), /zajęty/, 'login zajęty (bez względu na wielkość liter)');
 await rejects(() => A.login({ login: 'zbyszko', password: 'zle-haslo', mode: L }), /Nieprawidłowy login lub hasło/, 'złe hasło odrzucone');
 await A.login({ login: 'zbyszko', password: 'tajne123', mode: L });
 assert(G.load() && G.P.name === 'Zbyszko Groźny' && G.P.gold === 777, 'logowanie wczytuje bohatera konta');
 
 await A.logout();
-await A.register({ login: 'ania', password: 'haslo456', password2: 'haslo456', mode: L });
+await A.register({ consent: true, login: 'ania', password: 'haslo456', password2: 'haslo456', mode: L });
 assert(!G.hasSave(), 'drugie konto nie widzi bohatera pierwszego');
 hero('Ania Łuczniczka', 'archer');
 // „odświeżenie strony”
@@ -64,7 +65,7 @@ assert(G.load().name === 'Zbyszko Groźny' && G.P.gold === 777, 'import pliku po
 await A.logout();
 hero('Gość Bez Konta');
 assert(A.guestInfo() && A.guestInfo().name === 'Gość Bez Konta', 'wykryto bohatera bez konta');
-await A.register({ login: 'gosc', password: 'gosc123', password2: 'gosc123', mode: L, attach: true });
+await A.register({ consent: true, login: 'gosc', password: 'gosc123', password2: 'gosc123', mode: L, attach: true });
 assert(G.load().name === 'Gość Bez Konta' && !A.guestInfo(), 'bohater bez konta przypisany do nowego konta');
 
 await rejects(() => A.deleteLocalAccount('zle'), /Nieprawidłowe hasło/, 'usunięcie konta wymaga hasła');
@@ -132,20 +133,20 @@ Net.setClientForTests(cfg, sb.client);
 A.startSync();
 assert(A.cloudAvailable(), 'serwer skonfigurowany → konta online dostępne');
 const C = 'cloud';
-await rejects(() => A.register({ login: 'zly-email', password: 'tajne123', password2: 'tajne123', mode: C }), /e-mail/, 'niepoprawny e-mail odrzucony');
-const rc = await A.register({ login: 'Gracz@Test.pl', password: 'tajne123', password2: 'tajne123', mode: C });
+await rejects(() => A.register({ consent: true, login: 'zly-email', password: 'tajne123', password2: 'tajne123', mode: C }), /e-mail/, 'niepoprawny e-mail odrzucony');
+const rc = await A.register({ consent: true, login: 'Gracz@Test.pl', password: 'tajne123', password2: 'tajne123', mode: C });
 assert(rc.user.mode === 'cloud' && rc.user.email === 'gracz@test.pl', 'rejestracja konta online');
 assert(G.saveSlot().includes(':c:uid-1') && !G.hasSave(), 'konto online ma własny slot');
 hero('Rycerz Chmur', 'paladin');
 G.P.gold = 4242; G.save();
 assert(A.Acc.dirty, 'zapis gry oznacza zmianę do wysłania na serwer');
 assert(await A.pushCloud() && sb.saves['uid-1'] && sb.saves['uid-1'].data.name === 'Rycerz Chmur', 'bohater wysłany na serwer (tabela saves)');
-await rejects(() => A.register({ login: 'inny@test.pl', password: 'tajne123', password2: 'tajne123', mode: C }), /wyloguj/, 'rejestracja zablokowana, gdy ktoś jest zalogowany');
+await rejects(() => A.register({ consent: true, login: 'inny@test.pl', password: 'tajne123', password2: 'tajne123', mode: C }), /wyloguj/, 'rejestracja zablokowana, gdy ktoś jest zalogowany');
 G.P.gold = 4242; G.save();
 
 await A.logout();
 assert(!A.Acc.syncError && !Object.keys(localStorage._s).some((k) => k.includes(':c:uid-1')), 'po wylogowaniu kopia bohatera nie zostaje w przeglądarce');
-await rejects(() => A.register({ login: 'gracz@test.pl', password: 'tajne123', password2: 'tajne123', mode: C }), /już istnieje/, 'drugie konto na ten sam e-mail odrzucone');
+await rejects(() => A.register({ consent: true, login: 'gracz@test.pl', password: 'tajne123', password2: 'tajne123', mode: C }), /już istnieje/, 'drugie konto na ten sam e-mail odrzucone');
 await rejects(() => A.login({ login: 'gracz@test.pl', password: 'zle-haslo', mode: C }), /Nieprawidłowy e-mail lub hasło/, 'złe hasło konta online odrzucone');
 // „inne urządzenie”: pusty localStorage przeglądarki, logowanie pobiera bohatera z serwera
 await A.login({ login: 'gracz@test.pl', password: 'tajne123', mode: C });
@@ -164,7 +165,7 @@ assert(!sb.saves['uid-1'] && !G.hasSave(), 'nowa postać usuwa bohatera także z
 
 await A.logout();
 sb.S.confirm = true;
-const rConf = await A.register({ login: 'nowy@test.pl', password: 'tajne123', password2: 'tajne123', mode: C });
+const rConf = await A.register({ consent: true, login: 'nowy@test.pl', password: 'tajne123', password2: 'tajne123', mode: C });
 assert(rConf.needConfirm === true, 'gdy serwer wymaga potwierdzenia e-mail – komunikat o linku');
 
 console.log(fails ? `\n${fails} niepowodzeń` : '\nWszystkie testy kont OK');

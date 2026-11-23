@@ -7,7 +7,9 @@ export const RARITIES = [
   { id: 2, name: 'Rzadki', color: '#4f9bff', mul: 1.5, extra: 2 },
   { id: 3, name: 'Epicki', color: '#b46cff', mul: 1.88, extra: 3 },
   { id: 4, name: 'Legendarny', color: '#ff9f1c', mul: 2.4, extra: 4 },
+  { id: 5, name: 'Mityczny', color: '#ff3d6e', mul: 3.1, extra: 5 },
 ];
+export const MYTHIC = 5;
 export const WEAPON_TYPE_NAMES = { sword: 'Miecz', axe: 'Topór', hammer: 'Młot', staff: 'Kostur', wand: 'Różdżka', book: 'Księga', bow: 'Łuk', crossbow: 'Kusza', dagger: 'Sztylet', mace: 'Buzdygan' };
 
 // [slot, typ, nazwa, ikona, minPoziom]
@@ -98,4 +100,20 @@ export const LEGENDARIES = [
 ];
 
 export const ALL_TEMPLATES = [...TEMPLATES, ...LEGENDARIES];
-export const TEMPLATE_BY_ID = Object.fromEntries(ALL_TEMPLATES.map((t) => [t.tid, t]));
+
+// Mityczne (rzadkość 6.): unikatowe przedmioty z podwójnym efektem – tylko ze Skrzyni Mitycznej, Otchłani i koła fortuny
+export const MYTHICS = [
+  { tid: 'M0', slot: 'weapon', type: 'sword', name: 'Ostrze Zmierzchu Bogów', icon: 'weapons_15', special: { critDmgPct: 25, dmgPct: 8 }, fx: '+25% obr. krytycznych, +8% obrażeń' },
+  { tid: 'M1', slot: 'weapon', type: 'axe', name: 'Topór Pękniętego Nieba', icon: 'weapons_02', special: { dmgPct: 12, critPct: 4 }, fx: '+12% obrażeń, +4% krytyka' },
+  { tid: 'M2', slot: 'weapon', type: 'staff', name: 'Kostur Tysiąca Gwiazd', icon: 'weapons_05', special: { skillPct: 30, critPct: 4 }, fx: '+30% obr. umiejętności, +4% krytyka' },
+  { tid: 'M3', slot: 'weapon', type: 'bow', name: 'Łuk Wiecznej Zorzy', icon: 'weapons_10', special: { critPct: 9, critDmgPct: 15 }, fx: '+9% krytyka, +15% obr. krytycznych' },
+  { tid: 'M4', slot: 'weapon', type: 'dagger', name: 'Kły Pierwszej Nocy', icon: 'weapons_13', special: { dodgePct: 6, critDmgPct: 20 }, fx: '+6% uniku, +20% obr. krytycznych' },
+  { tid: 'M5', slot: 'weapon', type: 'mace', name: 'Buzdygan Świętego Słońca', icon: 'weapons_14', special: { leechPct: 6, hpPct: 8 }, fx: '6% kradzieży życia, +8% PŻ' },
+  { tid: 'M6', slot: 'helmet', type: '', name: 'Korona Utraconego Imperium', icon: 'armor_02', special: { hpPct: 14, expPct: 10 }, fx: '+14% PŻ, +10% EXP' },
+  { tid: 'M7', slot: 'armor', type: '', name: 'Pancerz Pradawnego Smoka', icon: 'armor_07', special: { armorPct: 20, hpPct: 8 }, fx: '+20% pancerza, +8% PŻ' },
+  { tid: 'M8', slot: 'gloves', type: '', name: 'Dłonie Alchemika Króla', icon: 'armor_10', special: { goldPct: 35, findPct: 15 }, fx: '+35% złota, +15% lepszych łupów' },
+  { tid: 'M9', slot: 'boots', type: '', name: 'Kroki Wiecznego Wędrowca', icon: 'armor_14', special: { speedPct: 20, dodgePct: 4 }, fx: '20% krótsze przygody, +4% uniku' },
+  { tid: 'M10', slot: 'ring', type: '', name: 'Pierścień Nieskończoności', icon: 'jewelry_07', special: { expPct: 18, critPct: 4 }, fx: '+18% EXP, +4% krytyka' },
+  { tid: 'M11', slot: 'amulet', type: '', name: 'Serce Feniksa Prastarego', icon: 'jewelry_15', special: { regenPct: 3, hpPct: 10 }, fx: 'Odnawia 3% PŻ co turę, +10% PŻ' },
+];
+export const TEMPLATE_BY_ID = Object.fromEntries([...ALL_TEMPLATES, ...MYTHICS].map((t) => [t.tid, t]));

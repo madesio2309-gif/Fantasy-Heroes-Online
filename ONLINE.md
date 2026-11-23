@@ -64,9 +64,18 @@ Na górnym pasku pojawi się zielony wskaźnik **Online**. Testerom wystarczy ot
 - Klucz publiczny (*publishable* / *anon*) jest z założenia jawny i może być w repozytorium – dostęp chronią reguły RLS
   z `schema.sql` (każdy gracz może zmieniać wyłącznie własny profil, własne wiadomości i własne obrażenia).
 - **Nigdy** nie wpisuj do gry klucza `secret` / `service_role`.
-- Postęp postaci liczony jest w przeglądarce gracza, więc doświadczony gracz mógłby podmienić swoje statystyki.
-  Baza ogranicza wartości (poziom 1–150, limity statystyk walki przy wczytywaniu rywala), ale pełna ochrona przed
-  oszustwami wymaga przeniesienia walk na serwer (Supabase Edge Functions) – to naturalny etap przed premierą.
+- Postęp postaci liczony jest w przeglądarce gracza. Od wersji 1.8 serwer pilnuje zapisów: tabela `player_guard`
+  (niedostępna dla graczy) i wyzwalacze `fho_saves_guard` / `fho_players_guard` ograniczają tempo przyrostu poziomu,
+  kryształów i pięter Otchłani, odrzucają nierealne zapisy (przywracając poprzednie dane), przycinają siłę profilu
+  areny do limitu dla poziomu i maskują wulgaryzmy w nazwach. Naruszenia widać w panelu administratora (zakładka Gracze).
+  Pełną ochronę dałoby dopiero liczenie walk na serwerze (Supabase Edge Functions).
+- Panel administratora: uprawnienia sprawdza serwer (`is_admin()` + tabela `admins`, wpisany adres
+  `madesio2309@gmail.com`). Eventy (`live_events`), ogłoszenia (`announcements`), zgłoszenia i blokady czatu
+  (`chat_reports`, `chat_bans`) mogą zmieniać wyłącznie administratorzy; gracze widzą tylko aktywne eventy i ogłoszenia.
+- Konto: rejestracja wymaga akceptacji Regulaminu i Polityki prywatności (wersja zapisywana w metadanych konta);
+  gracz może sam usunąć konto online (RPC `delete_my_account`).
+- Poczta: wbudowany serwer pocztowy Supabase wysyła maile tylko do członków zespołu projektu (limit 2/h). Aby reset
+  hasła i potwierdzanie e-maili działały dla wszystkich graczy, podłącz własny SMTP (Authentication → Emails → SMTP).
 - Hasła kont online przechowuje Supabase Auth (gra nigdy nie widzi ich w bazie). Tabela `saves` jest prywatna – RLS
   pozwala czytać i zmieniać wyłącznie własnego bohatera.
 - Z kontem online bohater jest na serwerze (zapis co ok. 15 s, przy zamknięciu karty i przy wylogowaniu). Przy

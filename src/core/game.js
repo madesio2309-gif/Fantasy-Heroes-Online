@@ -1,8 +1,10 @@
 // Stan gracza i wszystkie akcje gry
 import { CLASSES, STATS, TALENTS, TALENT_MAX, talentPointsFor, SKINS, SKILLS } from '../data/classes.js';
-import { RARITIES, SLOTS } from '../data/items.js';
+import { RARITIES, SLOTS, MYTHIC } from '../data/items.js';
 import { ENEMIES, ALL_ENEMIES, BOSSES, DUNGEONS } from '../data/enemies.js';
 import { QUESTS, EVENTS } from '../data/quests.js';
+import { PETS, PET_BY_ID, PET_MAX_LVL, PET_DUP_CRYSTALS, PET_EGG_COST } from '../data/pets.js';
+import { cleanText } from '../data/moderation.js';
 import { R, rng, dayKey, dayIndex, weekIndex, clamp, fmt } from './util.js';
 import {
   expNext, questLvlRate, goldBase, calcStats, powerOf, playerPower, playerFighter, enemyFighter, botFighter, fighterPower, scaleFighter, botStats, refPower,
@@ -83,8 +85,20 @@ export function load() {
   if (P.guild.id !== null && !(typeof P.guild.id === 'string' && P.guild.id.startsWith('net:'))) P.guild = { id: null, joined: 0, own: null, gb: null };
   P.chat = { global: [], guild: [] };
   P.arena.opp = (P.arena.opp || []).filter((id) => id.startsWith('net:'));
+  migrate8(P);
   tick(true);
   return P;
+}
+// aktualizacja 1.8: pety (jajo powitalne), Otchłań, koło fortuny, wyciszeni gracze, statystyki mitycznych
+function migrate8(p) {
+  if (!p.pets) p.pets = { owned: {}, active: null, eggs: 1 };
+  if (!p.abyss) p.abyss = { floor: 0, best: 0, keys: ABYSS_KEYS, day: dayKey() };
+  if (p.wheel === undefined) p.wheel = null;
+  if (!p.settings) p.settings = {};
+  if (!Array.isArray(p.settings.muted)) p.settings.muted = [];
+  if (p.stats.mythics === undefined) p.stats.mythics = 0;
+  if (p.seenVersion === undefined) p.seenVersion = null;
+  return p;
 }
 export function wipe() { localStorage.removeItem(SAVE_KEY); P = null; }
 
@@ -105,6 +119,8 @@ export function newPlayer({ name, cls, look, hue, aura }) {
     login: { day: null, streak: 0, claimed: false },
     seasonRewards: [], log: [], tut: 0, tutAuto: false, awak: 0, trial: null,
   };
+  migrate8(P);
+  P.seenVersion = 'new';
   // startowy ekwipunek: pełny zwykły zestaw
   for (const s of SLOTS) P.equip[s] = genItem({ lvl: 1, rarity: 0, cls, slot: s });
   tick(true);
@@ -137,6 +153,8 @@ export function tick(silent = false) {
     P.login.day = dk; P.login.claimed = false;
   }
   if (P.dungeon.keysDay !== dk) { P.dungeon.keys = DUNGEON_KEYS; P.dungeon.keysDay = dk; }
+  if (P.abyss && P.abyss.day !== dk) { P.abyss.keys = ABYSS_KEYS; P.abyss.day = dk; }
+  ensureWheel(now);
   if (P.arena.ticketsDay !== dk) { P.arena.tickets = ARENA_TICKETS + (currentEvent().arena ? 5 : 0); P.arena.ticketsDay = dk; }
   if (!P.challenges || P.challenges.day !== dk) genChallenges(dk);
   if (!P.shop || P.shop.day !== dk) genShop(dk);
@@ -166,7 +184,7 @@ export function tick(silent = false) {
 // czy zdobywanie poziomów stoi na progu przebudzenia (poziom 100/110/…/140 bez Przebudzenia)
 export const expBlocked = () => P.lvl >= levelCap(P) && P.lvl < MAX_LVL;
 export function addExp(n) {
-  n = Math.round(n);
+  n = Math.round(n * (n > 0 && liveActive('xp2') ? 2 : 1));
   if (P.lvl >= MAX_LVL) return 0;
   const cap = levelCap(P);
   if (P.lvl >= cap) {
@@ -187,7 +205,7 @@ export function addExp(n) {
   if (P.lvl >= MAX_LVL) P.exp = 0;
   return n;
 }
-export function addGold(n) { n = Math.round(n); P.gold += n; return n; }
+export function addGold(n) { n = Math.round(n * (n > 0 && liveActive('gold2') ? 2 : 1)); P.gold += n; return n; }
 export function addCrystals(n) { P.crystals += n; return n; }
 function eventPoints(n) { if (P.event) P.event.points += n; }
 export function track(id, n = 1) {
@@ -238,7 +256,9 @@ export function compare(it) {
 }
 export function addItem(it, silentFull = false) {
   if (it.rarity === 4) { P.stats.legendaries++; }
-  if (P.bag.length >= BAG_SIZE) {
+  if (it.rarity >= MYTHIC) { P.stats.mythics = (P.stats.mythics || 0) + 1; }
+  // legendarne i mityczne nigdy nie są sprzedawane automatycznie – plecak może się chwilowo przepełnić
+  if (P.bag.length >= BAG_SIZE && it.rarity < 4) {
     const g = sellPrice(it); P.gold += g;
     if (!silentFull) toast(`Plecak pełny! „${it.name}” sprzedano za ${fmt(g)} zł.`, 'bad');
     return false;
@@ -306,7 +326,7 @@ export function upgrade(uid) {
 }
 
 // ——— Łupy ———
-function lootBoost() { return currentEvent().lootBoost || 0; }
+function lootBoost() { return (currentEvent().lootBoost || 0) + (liveActive('gold2') ? 1 : 0); }
 export function rollItem(lvl, minRarity = 0, boost = 0) {
   const st = stats();
   let r = rollRarity(st.findPct, boost + lootBoost());
@@ -408,7 +428,7 @@ export function questBattle() {
     } else if (R() < q.itemChance) { const it = rollItem(P.lvl); addItem(it); rew.items.push(it); }
     if (q.rare?.cr) rew.cr = addCrystals(q.rare.cr);
     if (q.rare?.epic) { const it = rollItem(P.lvl, 3); addItem(it); rew.items.push(it); }
-    track('quests'); track('wins'); eventPoints(10);
+    track('quests'); track('wins'); eventPoints(10); wheelToken(1);
   } else {
     rew.gold = addGold(q.gold * 0.25);
     rew.exp = addExp(q.exp * 0.25);
@@ -479,7 +499,7 @@ export function claimMission(i) {
   if (!m || m.claimed || m.prog < m.goal) return;
   m.claimed = true;
   const g = addGold(goldBase(P.lvl) * 4); const e = addExp(expNext(P.lvl) * 0.08); addCrystals(5);
-  eventPoints(8);
+  eventPoints(8); wheelToken(1);
   save(); emit('change'); emit('sfx', 'coin');
   toast(`Misja ukończona: +${fmt(g)} zł, +${fmt(e)} EXP, +5 kryształów`, 'good');
 }
@@ -554,7 +574,7 @@ export function dungeonBattle(d) {
       if (d === 3 && !P.skinsOwned.includes('royal')) { P.skinsOwned.push('royal'); rew.skin = 'royal'; }
       if (d === 9 && !P.skinsOwned.includes('cosmic')) { P.skinsOwned.push('cosmic'); rew.skin = 'cosmic'; }
     } else if (R() < 0.45) { const it = rollItem(s.lvl, 1); addItem(it); rew.items.push(it); }
-    track('dungeon'); track('wins'); eventPoints(8);
+    track('dungeon'); track('wins'); eventPoints(8); wheelToken(1);
   } else {
     rew.gold = addGold(goldBase(s.lvl) * 1);
   }
@@ -634,7 +654,7 @@ export function wbAttack() {
   P.stats.maxDmg = Math.max(P.stats.maxDmg, dmg);
   netCall(Net.pushBossDamage('world', 'world', P.wb.week, P.wb.dmg), 'boss światowy');
   const rew = { gold: addGold(goldBase(P.lvl) * 3 * goldMul()), exp: addExp(expNext(P.lvl) * 0.05), items: [], cr: 0, dmg };
-  track('wboss'); eventPoints(10);
+  track('wboss'); eventPoints(10); wheelToken(1);
   save();
   return { kind: 'wboss', title: `Boss Światowy: ${b.name}`, bg: b.bg, A, B, sim, win: true, rew, rightImg: `bosses/${b.img}.webp`, rightName: b.name, rightLvl: P.lvl + 3, boss: true, damageMode: true };
 }
@@ -722,7 +742,7 @@ export function arenaBattle(oppId) {
     rew.gold = addGold(goldBase(P.lvl) * 2.5 * goldMul()); rew.exp = addExp(expNext(P.lvl) * 0.04 * expMul(false));
     track('wins');
   } else { P.arena.losses++; rew.gold = addGold(goldBase(P.lvl) * 0.5); }
-  track('arena'); eventPoints(6);
+  track('arena'); eventPoints(6); wheelToken(1);
   P.arena.opp = [];
   save();
   pushProfileSoon();
@@ -743,10 +763,10 @@ export function leaderboard(kind) {
   const rows = [];
   if (Net.isOnline()) {
     const gname = Object.fromEntries(Net.Net.guilds.map((g) => [g.id, g.name]));
-    for (const p of Net.Net.players) rows.push({ name: p.name, cls: p.cls, lvl: p.lvl, power: p.power, rating: p.rating, guild: gname[p.guild_id] || '—', online: true });
+    for (const p of Net.Net.players) rows.push({ id: p.id, name: p.name, cls: p.cls, lvl: p.lvl, power: Number(p.power) || 0, rating: p.rating, abyss: Number(p.abyss) || 0, guild: gname[p.guild_id] || '—', online: true });
   }
-  rows.push({ name: P.name, cls: P.cls, lvl: P.lvl, power: power(), rating: P.arena.rating, guild: guildName() || '—', me: true });
-  const key = kind === 'power' ? 'power' : kind === 'arena' ? 'rating' : 'lvl';
+  rows.push({ name: P.name, cls: P.cls, lvl: P.lvl, power: power(), rating: P.arena.rating, abyss: P.abyss?.floor || 0, guild: guildName() || '—', me: true });
+  const key = kind === 'power' ? 'power' : kind === 'arena' ? 'rating' : kind === 'abyss' ? 'abyss' : 'lvl';
   rows.sort((a, b) => b[key] - a[key] || b.power - a.power);
   return rows;
 }
@@ -759,7 +779,7 @@ export function guildName() { return isNetGuild() ? P.guild.netName : null; }
 export function guildMembersInfo() {
   if (!isNetGuild()) return [];
   const gid = guildNetId();
-  return Net.Net.players.filter((p) => p.guild_id === gid).map((p) => ({ name: p.name, cls: p.cls, lvl: p.lvl, power: Number(p.power) || 0, online: true }));
+  return Net.Net.players.filter((p) => p.guild_id === gid).map((p) => ({ id: p.id, name: p.name, cls: p.cls, lvl: p.lvl, power: Number(p.power) || 0, online: true }));
 }
 export function guildLevel() {
   if (P.guild.id === null) return 0;
@@ -823,7 +843,7 @@ export function gbAttack() {
   P.guild.gb.dmg += dmg;
   if (isNetGuild()) netCall(Net.pushBossDamage('guild', guildNetId(), P.guild.gb.week, P.guild.gb.dmg), 'boss gildii');
   const rew = { gold: addGold(goldBase(P.lvl) * 2 * goldMul()), exp: addExp(expNext(P.lvl) * 0.04), items: [], cr: 0, dmg };
-  track('gboss'); eventPoints(10);
+  track('gboss'); eventPoints(10); wheelToken(1);
   save();
   return { kind: 'gboss', title: `Boss Gildii: ${b.name}`, bg: 'guildhall', A, B, sim, win: true, rew, rightImg: `bosses/${b.img}.webp`, rightName: b.name, rightLvl: P.lvl + 2, boss: true, damageMode: true };
 }
@@ -842,7 +862,7 @@ export function gbClaim(k) {
 
 // ——— Czat (tylko prawdziwi gracze, przez serwer) ———
 export function sendChat(channel, text) {
-  text = text.trim().slice(0, 140);
+  text = cleanText(text.trim().slice(0, 140));
   if (!text) return;
   if (!Net.isOnline()) return toast('Czat działa w trybie online – połącz grę z serwerem.', 'bad');
   const netChannel = channel === 'guild' ? (isNetGuild() ? 'guild:' + guildNetId() : null) : 'global';
@@ -857,9 +877,16 @@ export function netProfile() {
   const f = playerFighter({ ...P, awak: 0 });
   const fighter = { awak: P.awak || 0 };
   for (const k of ['maxHp', 'dmgMin', 'dmgMax', 'armor', 'crit', 'critDmg', 'dodge', 'block', 'resist', 'pierce', 'leech', 'regen', 'skillPct', 'initPct', 'skills']) fighter[k] = f[k];
+  // zwięzły zapis ekwipunku do podglądu przez innych graczy
+  const equip = {};
+  for (const s of SLOTS) {
+    const it = P.equip[s];
+    if (it) equip[s] = { t: it.tid, n: it.name, i: it.icon, r: it.rarity, l: it.lvl, u: it.up || 0, s: it.stats, d: it.dmg || 0, a: it.armor || 0, y: it.type || '', f: it.fx || '' };
+  }
+  const pet = P.pets && P.pets.active ? { id: P.pets.active, lvl: P.pets.owned[P.pets.active] || 1 } : null;
   return {
     name: P.name, cls: P.cls, look: P.look, hue: P.hue, skin: P.skin, lvl: P.lvl, power: power(), rating: P.arena.rating,
-    guildNetId: guildNetId(), fighter, week: P.wb.week,
+    guildNetId: guildNetId(), fighter, week: P.wb.week, equip, pet, abyss: P.abyss?.floor || 0,
   };
 }
 export async function connectOnline(cfg) {
@@ -894,7 +921,15 @@ async function loadNetChat() {
   emit('chat');
 }
 Net.onNet((type, msg) => {
-  if (type !== 'chat' || !P) return;
+  if (!P) return;
+  if (type === 'chatDelete') {
+    P.chat.global = P.chat.global.filter((m) => m.id !== msg);
+    P.chat.guild = P.chat.guild.filter((m) => m.id !== msg);
+    emit('chat');
+    return;
+  }
+  if (type === 'live') { emit('change'); return; }
+  if (type !== 'chat') return;
   if (msg.channel === 'global') P.chat.global.push(msg);
   else if (isNetGuild() && msg.channel === 'guild:' + guildNetId()) P.chat.guild.push(msg);
   else return;
@@ -1112,4 +1147,240 @@ export function trialAttack() {
     trial: { before, max: rew.trialMax, glow: T.glow, phase: TRIAL_PHASES[phase].name, cap },
   };
 }
+// ——— Eventy uruchamiane przez administratora (live_events z serwera) ———
+export function activeLive(t = Date.now()) {
+  return (Net.Net.live || []).filter((e) => new Date(e.starts_at).getTime() <= t && t < new Date(e.ends_at).getTime());
+}
+export const liveActive = (kind, t = Date.now()) => activeLive(t).some((e) => e.kind === kind);
+
+// ——— Otchłań: nieskończony loch (2000 pięter, od 100 poziomu) ———
+export const ABYSS_FLOORS = 2000;
+export const ABYSS_REQ = 100;
+export const ABYSS_KEYS = 15;
+export const abyssUnlocked = () => P.lvl >= ABYSS_REQ;
+export function abyssSpec(f) {
+  const L = ABYSS_REQ + Math.floor(f * 0.45);
+  if (f % 10 === 0) {
+    const b = BOSSES[(f / 10 - 1) % BOSSES.length];
+    return { boss: true, L, e: b, name: b.name, img: `bosses/${b.img}.webp`, diff: 1.1 };
+  }
+  const e = ALL_ENEMIES[(f * 7 + Math.floor(f / 10) * 3) % ALL_ENEMIES.length];
+  return { boss: false, L, e, name: e.name, img: `enemies/${e.img}.webp`, diff: 0.8 + (f % 10) * 0.025 };
+}
+// przeciwnik skalowany do siły „przeciętnego” gracza na poziomie piętra
+export function abyssEnemy(f) {
+  const s = abyssSpec(f);
+  const B = s.boss
+    ? enemyFighter({ ...s.e, arch: 'boss', hp: 1, dmg: 1, armor: 1.1, dodge: 3, crit: 7 }, s.L, 1, { hpMul: 1.5, boss: true })
+    : enemyFighter(s.e, s.L, 1);
+  if (s.boss) B.bossSkill = s.e.title;
+  scaleFighter(B, (refPower(s.L) * s.diff) / Math.max(1, fighterPower(B)));
+  return { s, B };
+}
+export function abyssRewards(f) {
+  const r = [];
+  if (f % 10 === 0) r.push('5 💎 + epicki łup');
+  if (f % 50 === 0) r.push('jajo peta');
+  if (f % 100 === 0) r.push(f >= 500 ? 'legendarny łup (35% mityczny) + 50 💎' : 'legendarny łup + 50 💎');
+  if (f >= 1000 && f % 250 === 0) r.push('mityczny łup');
+  if (f === 500) r.push('skórka „Wędrowiec Otchłani”');
+  if (f === ABYSS_FLOORS) r.push('skórka „Władca Otchłani”');
+  return r;
+}
+export function nextAbyssMilestone(from = P.abyss.floor + 1) {
+  for (let f = from; f <= ABYSS_FLOORS; f++) if (f % 10 === 0) return { floor: f, rewards: abyssRewards(f) };
+  return null;
+}
+export function abyssBattle() {
+  if (!abyssUnlocked()) { toast(`Otchłań otwiera się na ${ABYSS_REQ} poziomie.`, 'bad'); return null; }
+  if (P.abyss.floor >= ABYSS_FLOORS) { toast('Zdobyłeś wszystkie piętra Otchłani!', 'good'); return null; }
+  if (P.abyss.keys <= 0) { toast(`Brak kluczy Otchłani – jutro dostaniesz ${ABYSS_KEYS} nowych.`, 'bad'); return null; }
+  P.abyss.keys--;
+  const f = P.abyss.floor + 1;
+  const { s, B } = abyssEnemy(f);
+  const A = playerFighter(P);
+  const sim = simulate(A, B);
+  const win = sim.winner === 0;
+  P.stats.fights++;
+  const rew = { gold: 0, exp: 0, items: [], cr: 0, skin: null, eggs: 0 };
+  if (win) {
+    P.stats.wins++;
+    P.abyss.floor = f;
+    P.abyss.best = Math.max(P.abyss.best || 0, f);
+    rew.gold = addGold(goldBase(s.L) * (s.boss ? 20 : 4) * goldMul());
+    rew.exp = addExp(expNext(Math.min(P.lvl, s.L)) * (s.boss ? 0.4 : 0.08) * expMul(false));
+    if (f % 10 === 0) { rew.cr += addCrystals(5); const it = rollItem(s.L, 3); addItem(it); rew.items.push(it); P.stats.bosses++; }
+    if (f % 50 === 0) { P.pets.eggs++; rew.eggs++; }
+    if (f % 100 === 0) {
+      rew.cr += addCrystals(50);
+      const it = genItem({ lvl: s.L, rarity: f >= 500 && R() < 0.35 ? MYTHIC : 4, cls: P.cls });
+      addItem(it); rew.items.push(it);
+    }
+    if (f >= 1000 && f % 250 === 0) { const it = genItem({ lvl: s.L, rarity: MYTHIC, cls: P.cls }); addItem(it); rew.items.push(it); }
+    if (f === 500 && !P.skinsOwned.includes('abyss')) { P.skinsOwned.push('abyss'); rew.skin = 'abyss'; }
+    if (f === ABYSS_FLOORS && !P.skinsOwned.includes('abyssLord')) { P.skinsOwned.push('abyssLord'); rew.skin = 'abyssLord'; }
+    track('dungeon'); track('wins'); eventPoints(8); wheelToken(1);
+    pushProfileSoon();
+  } else {
+    rew.gold = addGold(goldBase(s.L));
+  }
+  save();
+  return { kind: 'abyss', title: `Otchłań – piętro ${f}`, bg: 'abyss', A, B, sim, win, rew, rightImg: s.img, rightName: s.name, rightLvl: s.L, boss: s.boss };
+}
+
+// ——— Skrzynia Mityczna: 90% legendarny, 10% mityczny ———
+export const MYTHIC_CHEST_COST = 2000;
+export const MYTHIC_CHANCE = 0.1;
+function openMythicChest(rnd = R) {
+  const it = genItem({ lvl: P.lvl, rarity: rnd() < MYTHIC_CHANCE ? MYTHIC : 4, cls: P.cls });
+  addItem(it);
+  return it;
+}
+export function buyMythicChest() {
+  if (P.crystals < MYTHIC_CHEST_COST) { toast(`Skrzynia Mityczna kosztuje ${fmt(MYTHIC_CHEST_COST)} kryształów.`, 'bad'); return null; }
+  P.crystals -= MYTHIC_CHEST_COST;
+  const it = openMythicChest();
+  save(); emit('change'); emit('sfx', 'chest');
+  return it;
+}
+
+// ——— Pety (bonusy pasywne) ———
+export function buyEgg() {
+  if (P.crystals < PET_EGG_COST) { toast(`Jajo peta kosztuje ${PET_EGG_COST} kryształów.`, 'bad'); return false; }
+  P.crystals -= PET_EGG_COST; P.pets.eggs++;
+  save(); emit('change'); emit('sfx', 'coin');
+  return true;
+}
+export function hatchEgg(rnd = R) {
+  if (P.pets.eggs <= 0) { toast('Nie masz jaj. Zdobywasz je w Otchłani, z koła fortuny lub w sklepie.', 'bad'); return null; }
+  P.pets.eggs--;
+  const total = PETS.reduce((s, p) => s + p.weight, 0);
+  let x = rnd() * total, pet = PETS[PETS.length - 1];
+  for (const p of PETS) { x -= p.weight; if (x <= 0) { pet = p; break; } }
+  const cur = P.pets.owned[pet.id] || 0;
+  let res;
+  if (!cur) { P.pets.owned[pet.id] = 1; res = { pet, lvl: 1, isNew: true }; if (!P.pets.active) P.pets.active = pet.id; }
+  else if (cur < PET_MAX_LVL) { P.pets.owned[pet.id] = cur + 1; res = { pet, lvl: cur + 1, up: true }; }
+  else { addCrystals(PET_DUP_CRYSTALS); res = { pet, lvl: cur, cr: PET_DUP_CRYSTALS }; }
+  save(); emit('change'); emit('appearance'); pushProfileSoon();
+  return res;
+}
+export function setActivePet(id) {
+  if (id && !P.pets.owned[id]) return;
+  P.pets.active = id || null;
+  save(); emit('change'); emit('appearance'); pushProfileSoon();
+}
+
+// ——— Koło fortuny: weekend (sob–nd) lub event „Szczęśliwe Koło” ———
+export const WHEEL_PRIZES = [
+  { id: 'gold', label: 'Wór złota', icon: 'gold', w: 30 },
+  { id: 'cr15', label: '15 💎', icon: 'crystal', w: 20 },
+  { id: 'energy', label: '+30 energii', icon: 'energy', w: 12 },
+  { id: 'keys', label: '+3 klucze', icon: 'key', w: 10 },
+  { id: 'cr50', label: '50 💎', icon: 'crystal', w: 8 },
+  { id: 'epic', label: 'Epicki łup', icon: 'chest', w: 8 },
+  { id: 'egg', label: 'Jajo peta', icon: 'egg', w: 5 },
+  { id: 'legend', label: 'Legendarny łup', icon: 'legendChest', w: 4 },
+  { id: 'cr250', label: '250 💎', icon: 'crystal', w: 2 },
+  { id: 'mythic', label: 'Skrzynia Mityczna', icon: 'mythicChest', w: 1 },
+];
+const isWeekend = (t) => { const d = new Date(t).getDay(); return d === 0 || d === 6; };
+export const wheelActive = (t = Date.now()) => isWeekend(t) || liveActive('wheel', t);
+// klucz okresu: weekend (data soboty) albo konkretny event – żetony wygasają, gdy okres się zmieni
+function wheelPeriod(t) {
+  if (isWeekend(t)) { const d = new Date(t); d.setDate(d.getDate() - (d.getDay() === 0 ? 1 : 0)); return 'wk' + dayKey(d.getTime()); }
+  const ev = activeLive(t).find((e) => e.kind === 'wheel');
+  return ev ? 'ev' + ev.id : null;
+}
+function ensureWheel(t = Date.now()) {
+  const key = wheelPeriod(t);
+  if (!key) return null;
+  if (!P.wheel || P.wheel.key !== key) P.wheel = { key, tokens: 0, freeDay: null, spins: 0, last: [] };
+  return P.wheel;
+}
+export const wheelFreeTokens = () => (liveActive('wheel') ? 5 : 3);
+// czas do otwarcia koła (najbliższa sobota 00:00) i do jego zamknięcia (poniedziałek 00:00 lub koniec eventu)
+export function wheelOpensIn(t = Date.now()) {
+  const d = new Date(t);
+  const add = ((6 - d.getDay() + 7) % 7) || 7;
+  d.setDate(d.getDate() + add); d.setHours(0, 0, 0, 0);
+  return d.getTime() - t;
+}
+export function wheelClosesIn(t = Date.now()) {
+  if (isWeekend(t)) { const d = new Date(t); d.setDate(d.getDate() + (d.getDay() === 6 ? 2 : 1)); d.setHours(0, 0, 0, 0); return d.getTime() - t; }
+  const ev = activeLive(t).find((e) => e.kind === 'wheel');
+  return ev ? new Date(ev.ends_at).getTime() - t : 0;
+}
+export function wheelState() {
+  const w = ensureWheel();
+  return { active: !!w, tokens: w ? w.tokens : 0, freeReady: !!w && w.freeDay !== dayKey(), spins: w ? w.spins : 0, last: w ? w.last : [] };
+}
+export function wheelToken(n = 1) {
+  const w = ensureWheel();
+  if (!w) return 0;
+  const k = n * (liveActive('wheel') ? 2 : 1);
+  w.tokens += k;
+  return k;
+}
+export function claimWheelFree() {
+  const w = ensureWheel();
+  if (!w || w.freeDay === dayKey()) return 0;
+  w.freeDay = dayKey();
+  const n = wheelFreeTokens();
+  w.tokens += n;
+  save(); emit('change');
+  return n;
+}
+export function wheelPick(rnd = R) {
+  const total = WHEEL_PRIZES.reduce((s, p) => s + p.w, 0);
+  let x = rnd() * total;
+  for (let i = 0; i < WHEEL_PRIZES.length; i++) { x -= WHEEL_PRIZES[i].w; if (x <= 0) return i; }
+  return WHEEL_PRIZES.length - 1;
+}
+export function spinWheel(rnd = R) {
+  const w = ensureWheel();
+  if (!w) { toast('Koło fortuny kręci się w weekendy (sobota–niedziela).', 'bad'); return null; }
+  if (w.tokens <= 0) { toast('Brak żetonów. Zdobywasz je za przygody, lochy, arenę, bossów i misje.', 'bad'); return null; }
+  w.tokens--; w.spins++;
+  const index = wheelPick(rnd);
+  const prize = WHEEL_PRIZES[index];
+  const L = P.lvl;
+  let text = prize.label, item = null;
+  switch (prize.id) {
+    case 'gold': text = `+${fmt(addGold(goldBase(L) * 15))} złota`; break;
+    case 'cr15': addCrystals(15); break;
+    case 'energy': P.energy = Math.min(ENERGY_MAX * 2, P.energy + 30); break;
+    case 'keys': P.dungeon.keys += 3; break;
+    case 'cr50': addCrystals(50); break;
+    case 'epic': item = rollItem(L, 3); addItem(item); break;
+    case 'egg': P.pets.eggs++; break;
+    case 'legend': item = rollItem(L, 4); addItem(item); break;
+    case 'cr250': addCrystals(250); break;
+    case 'mythic': item = openMythicChest(rnd); break;
+  }
+  if (item) text = `${prize.label}: ${item.name}`;
+  w.last = [{ t: Date.now(), text }, ...(w.last || [])].slice(0, 8);
+  save(); emit('change');
+  return { index, prize, text, item };
+}
+
+// ——— Moderacja czatu: wyciszanie graczy (lokalnie), zgłoszenia ———
+export const isMuted = (authorId) => !!authorId && P.settings.muted.includes(authorId);
+export function toggleMute(authorId, name) {
+  if (!authorId) return;
+  const m = P.settings.muted;
+  const i = m.indexOf(authorId);
+  if (i >= 0) { m.splice(i, 1); toast(`Wyciszenie gracza ${name} zostało zdjęte.`); }
+  else { m.push(authorId); toast(`Gracz ${name} został wyciszony – nie zobaczysz jego wiadomości.`); }
+  save(); emit('chat');
+}
+export async function reportMessage(msg, reason) {
+  if (!Net.isOnline()) { toast('Zgłoszenia działają w trybie online.', 'bad'); return false; }
+  try { await Net.reportMessage(msg.id, reason); }
+  catch (e) { toast(/duplicate|unique/i.test(e.message) ? 'Ta wiadomość została już przez Ciebie zgłoszona.' : 'Nie udało się zgłosić: ' + e.message, 'bad'); return false; }
+  toast('Dziękujemy – zgłoszenie trafiło do administratora.', 'good');
+  return true;
+}
+export function markVersionSeen(v) { P.seenVersion = v; save(); }
+
 export { calcStats, powerOf, expNext, unlockedSkills, upgradeCost, sellPrice, buyPrice, MAX_UP, BAG_SIZE, goldBase, MAX_LVL, levelCap };

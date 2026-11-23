@@ -16,7 +16,7 @@ assert(G.wbContributors().length === 1, 'offline boss światowy: tylko własny w
 assert(G.wbMaxHp() === Math.round(G.power() * 40), 'offline pula PŻ bossa światowego dopasowana do gracza');
 G.P.gold = 5000; G.createGuild('Testowa');
 assert(G.P.guild.id === null && G.P.gold === 5000, 'offline nie da się założyć gildii (bez opłaty)');
-assert(!G.P.daily.missions.some((m) => m.id === 'arena'), 'bez serwera brak misji areny');
+assert(G.Net.getConfig() || !G.P.daily.missions.some((m) => m.id === 'arena'), 'bez konfiguracji serwera brak misji areny');
 
 // 2) podstawiony stan online
 const prof = G.netProfile();

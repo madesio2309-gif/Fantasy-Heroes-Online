@@ -279,7 +279,7 @@ export class BattlePlayer {
         awk = h('div', { class: 'awk-new', style: { borderColor: spec.trial.glow } },
           h('div', { class: 'awk-rn big', style: { background: spec.trial.glow } }, a.roman),
           h('div', {}, h('div', { class: 'muted' }, 'Nowa umiejętność Przebudzenia'), h('b', {}, a.skill.name), h('div', {}, a.skill.desc),
-            h('div', { class: 'awk-new-bon' }, `+7% siły · limit poziomu ${G.levelCap(P)}`)));
+            h('div', { class: 'awk-new-bon' }, `+7% siły · ${Number.isFinite(G.levelCap(P)) ? `limit poziomu ${G.levelCap(P)}` : 'poziomy bez limitu'}`)));
       }
       const items = rew.items?.length ? h('div', { class: 'rw-items' }, rew.items.map((it) => {
         const el = itemSlotEl(it, { onclick: () => this.app.showItem(it) });

@@ -1,7 +1,11 @@
 // Warstwa online (Supabase): profile graczy, rankingi, asynchroniczne PvP, czat na żywo, gildie, bossowie.
 // Gdy brak konfiguracji lub połączenia – gra działa offline (solo: przygody, lochy, Próby; bez areny, gildii i czatu).
 import { DEFAULT_ONLINE } from './config.js';
-import { applyAwakening } from '../core/formulas.js';
+import { applyAwakening, fighterPower, maxPowerFor, scaleFighter } from '../core/formulas.js';
+import { cleanText } from '../data/moderation.js';
+import { RARITIES, SLOTS, TEMPLATE_BY_ID } from '../data/items.js';
+import { PET_BY_ID, PET_MAX_LVL } from '../data/pets.js';
+import { LIVE_EVENTS } from '../data/live.js';
 
 const CFG_KEY = 'fho_online_cfg';
 const TIMEOUT_MS = 12000;
@@ -16,6 +20,8 @@ export const Net = {
   players: [], // inni gracze (bez siebie)
   guilds: [], // { id, name, owner, members }
   boss: { worldTotal: 0, worldOwnServer: 0, guildOthers: 0, contributors: [] },
+  live: [], // aktywne i zaplanowane eventy administratora
+  news: [], // ogłoszenia
   channel: null,
   lastProfile: 0,
   lastRefresh: 0,
@@ -108,8 +114,31 @@ export async function pushProfile(profile, force = false) {
   const row = {
     id: Net.uid, name: profile.name, cls: profile.cls, look: profile.look, hue: profile.hue, skin: profile.skin,
     lvl: profile.lvl, power: profile.power, rating: profile.rating, guild_id: profile.guildNetId || null, fighter: profile.fighter,
+    equip: profile.equip || {}, pet: profile.pet || null, abyss: profile.abyss || 0,
   };
   check(await withTimeout(Net.client.from('players').upsert(row), 'Zapis profilu'), 'Zapis profilu');
+}
+
+// ——— Dane publiczne (dostępne także przed zalogowaniem): eventy i ogłoszenia ———
+export async function loadPublic(cfg = getConfig()) {
+  if (!cfg) return { live: [], news: [] };
+  const c = Net.client || (await getClient(cfg));
+  const now = new Date().toISOString();
+  const [ev, an] = await Promise.all([
+    withTimeout(c.from('live_events').select('id,kind,starts_at,ends_at').gt('ends_at', now).order('starts_at').limit(20), 'Eventy'),
+    withTimeout(c.from('announcements').select('id,title,body,created_at').eq('active', true).order('created_at', { ascending: false }).limit(5), 'Ogłoszenia'),
+  ]);
+  Net.live = check(ev, 'Eventy').filter((e) => LIVE_EVENTS[e.kind]);
+  Net.news = check(an, 'Ogłoszenia').map((a) => ({ ...a, title: cleanText(a.title), body: cleanText(a.body) }));
+  emit('live');
+  return { live: Net.live, news: Net.news };
+}
+// pełny profil jednego gracza (z ekwipunkiem) – pobierany na żądanie
+export async function getPlayerProfile(id) {
+  if (!Net.client) throw new Error('Brak połączenia z serwerem');
+  const row = check(await withTimeout(Net.client.from('players').select('id,name,cls,look,hue,skin,lvl,power,rating,guild_id,fighter,equip,pet,abyss,updated_at').eq('id', id).maybeSingle(), 'Profil gracza'), 'Profil gracza');
+  if (!row) throw new Error('Gracz nie istnieje lub usunął konto');
+  return row;
 }
 
 // ——— Odświeżenie danych świata ———
@@ -118,7 +147,7 @@ export async function refresh(week, guildNetId) {
   Net.lastRefresh = Date.now();
   const c = Net.client;
   const [pl, gu, wb] = await Promise.all([
-    withTimeout(c.from('players').select('id,name,cls,look,hue,skin,lvl,power,rating,guild_id,fighter,updated_at').neq('id', Net.uid).order('power', { ascending: false }).limit(300), 'Gracze'),
+    withTimeout(c.from('players').select('id,name,cls,look,hue,skin,lvl,power,rating,guild_id,fighter,abyss,updated_at').neq('id', Net.uid).order('power', { ascending: false }).limit(300), 'Gracze'),
     withTimeout(c.from('guilds').select('id,name,owner,players(count)').order('created_at').limit(100), 'Gildie'),
     withTimeout(c.from('boss_damage').select('player_id,dmg').eq('kind', 'world').eq('scope', 'world').eq('week', week).order('dmg', { ascending: false }).limit(100), 'Boss światowy'),
   ]);
@@ -135,6 +164,7 @@ export async function refresh(week, guildNetId) {
     const gb = check(await withTimeout(c.from('boss_damage').select('player_id,dmg').eq('kind', 'guild').eq('scope', guildNetId).eq('week', week), 'Boss gildii'), 'Boss gildii');
     Net.boss.guildOthers = gb.filter((r) => r.player_id !== Net.uid).reduce((s, r) => s + Number(r.dmg), 0);
   } else Net.boss.guildOthers = 0;
+  await loadPublic();
   emit('refresh');
 }
 
@@ -160,7 +190,7 @@ export async function leaveGuild() {
 
 // ——— Czat ———
 function toMsg(row) {
-  return { id: row.id, from: row.name, cls: row.cls, text: row.body, t: new Date(row.created_at).getTime(), me: row.author === Net.uid, online: true, channel: row.channel };
+  return { id: row.id, author: row.author, from: cleanText(row.name), cls: row.cls, text: cleanText(row.body), t: new Date(row.created_at).getTime(), me: row.author === Net.uid, online: true, channel: row.channel };
 }
 export async function loadChat(channel) {
   const rows = check(await withTimeout(Net.client.from('chat_messages').select('id,channel,author,name,cls,body,created_at').eq('channel', channel).order('created_at', { ascending: false }).limit(40), 'Czat'), 'Czat');
@@ -169,26 +199,122 @@ export async function loadChat(channel) {
 function subscribeChat() {
   Net.channel = Net.client.channel('fho-chat')
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'chat_messages' }, (payload) => emit('chat', toMsg(payload.new)))
+    .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'chat_messages' }, (payload) => emit('chatDelete', payload.old && payload.old.id))
     .subscribe((st, err) => { if (err) console.error('Realtime czatu:', err); });
 }
 export async function sendChat(channel, name, cls, body) {
   const r = await withTimeout(Net.client.from('chat_messages').insert({ channel, name, cls, body }), 'Wysyłanie wiadomości');
   if (r.error && /CHAT_RATE_LIMIT/.test(r.error.message)) throw new Error('Za szybko! Odczekaj chwilę.');
+  if (r.error && /row-level security|CHAT_BANNED/i.test(r.error.message)) throw new Error('Twój czat jest czasowo zablokowany przez administratora.');
   check(r, 'Wysyłanie wiadomości');
+}
+export async function reportMessage(messageId, reason) {
+  if (!Net.client) throw new Error('Brak połączenia z serwerem');
+  check(await withTimeout(Net.client.from('chat_reports').insert({ message_id: messageId, reason: String(reason || '').slice(0, 200) }), 'Zgłoszenie'), 'Zgłoszenie');
+}
+export async function myChatBan() {
+  if (!Net.client || !Net.uid) return null;
+  return check(await withTimeout(Net.client.from('chat_bans').select('until,reason').eq('user_id', Net.uid).gt('until', new Date().toISOString()).maybeSingle(), 'Blokada czatu'), 'Blokada czatu');
+}
+
+// ——— Konto: usunięcie (funkcja serwera usuwa użytkownika; dane gry kasują się kaskadowo) ———
+export async function deleteMyAccount(client) {
+  check(await withTimeout(client.rpc('delete_my_account'), 'Usuwanie konta'), 'Usuwanie konta');
+}
+
+// ——— Panel administratora (uprawnienia sprawdza serwer: is_admin()) ———
+const db = () => { if (!Net.client) throw new Error('Brak połączenia z serwerem'); return Net.client; };
+export const Admin = {
+  async isAdmin() { return !!check(await withTimeout(db().rpc('is_admin'), 'Uprawnienia'), 'Uprawnienia'); },
+  async stats() { return check(await withTimeout(db().rpc('admin_stats'), 'Statystyki'), 'Statystyki'); },
+  async events() { return check(await withTimeout(db().from('live_events').select('id,kind,starts_at,ends_at,created_at').order('starts_at', { ascending: false }).limit(30), 'Eventy'), 'Eventy'); },
+  async startEvent(kind, hours) {
+    if (!LIVE_EVENTS[kind]) throw new Error('Nieznany event');
+    const now = new Date();
+    const row = { kind, starts_at: now.toISOString(), ends_at: new Date(now.getTime() + hours * 3600000).toISOString() };
+    check(await withTimeout(db().from('live_events').insert(row), 'Start eventu'), 'Start eventu');
+    await loadPublic();
+  },
+  async stopEvent(id) {
+    check(await withTimeout(db().from('live_events').update({ ends_at: new Date().toISOString() }).eq('id', id), 'Zatrzymanie eventu'), 'Zatrzymanie eventu');
+    await loadPublic();
+  },
+  async news() { return check(await withTimeout(db().from('announcements').select('id,title,body,active,created_at').order('created_at', { ascending: false }).limit(30), 'Ogłoszenia'), 'Ogłoszenia'); },
+  async postNews(title, body) {
+    check(await withTimeout(db().from('announcements').insert({ title: title.trim(), body: body.trim() }), 'Nowe ogłoszenie'), 'Nowe ogłoszenie');
+    await loadPublic();
+  },
+  async setNewsActive(id, active) {
+    check(await withTimeout(db().from('announcements').update({ active }).eq('id', id), 'Ogłoszenie'), 'Ogłoszenie');
+    await loadPublic();
+  },
+  async reports(status = 'open') { return check(await withTimeout(db().from('chat_reports').select('id,message_id,reporter,author,author_name,body,reason,status,created_at').eq('status', status).order('created_at', { ascending: false }).limit(50), 'Zgłoszenia'), 'Zgłoszenia'); },
+  async closeReport(id, status) { check(await withTimeout(db().from('chat_reports').update({ status }).eq('id', id), 'Zgłoszenie'), 'Zgłoszenie'); },
+  async deleteMessage(id) { check(await withTimeout(db().from('chat_messages').delete().eq('id', id), 'Usuwanie wiadomości'), 'Usuwanie wiadomości'); },
+  async ban(userId, hours, reason) {
+    const until = new Date(Date.now() + hours * 3600000).toISOString();
+    check(await withTimeout(db().from('chat_bans').upsert({ user_id: userId, until, reason: String(reason || '').slice(0, 200) }), 'Blokada czatu'), 'Blokada czatu');
+  },
+  async unban(userId) { check(await withTimeout(db().from('chat_bans').delete().eq('user_id', userId), 'Zdjęcie blokady'), 'Zdjęcie blokady'); },
+  async bans() { return check(await withTimeout(db().from('chat_bans').select('user_id,until,reason,created_at').gt('until', new Date().toISOString()).order('until', { ascending: false }).limit(50), 'Blokady'), 'Blokady'); },
+  async searchPlayers(q) {
+    let req = db().from('players').select('id,name,cls,lvl,power,abyss,updated_at').order('updated_at', { ascending: false }).limit(30);
+    if (q && q.trim()) req = req.ilike('name', `%${q.trim().replace(/[%_]/g, '')}%`);
+    return check(await withTimeout(req, 'Gracze'), 'Gracze');
+  },
+  async guards(ids) {
+    if (!ids.length) return [];
+    return check(await withTimeout(db().from('player_guard').select('user_id,lvl,cr,abyss,strikes,last_reject,flagged,at').in('user_id', ids), 'Ochrona'), 'Ochrona');
+  },
+  async flagged() { return check(await withTimeout(db().from('player_guard').select('user_id,lvl,cr,abyss,strikes,last_reject,flagged,at').gt('strikes', 0).order('strikes', { ascending: false }).limit(30), 'Ochrona'), 'Ochrona'); },
+  async clearGuard(userId) {
+    check(await withTimeout(db().from('player_guard').update({ strikes: 0, flagged: false, last_reject: null, b_lvl: 40, b_cr: 6000, b_abyss: 60 }).eq('user_id', userId), 'Ochrona'), 'Ochrona');
+  },
+};
+
+// ——— Ekwipunek z profilu innego gracza (oczyszczany: zakresy liczb, znane ikony, krótkie teksty) ———
+const ICON_RE = /^(weapons|armor|jewelry)_\d\d$/;
+export function itemsFromRow(row) {
+  const src = row && typeof row.equip === 'object' && row.equip ? row.equip : {};
+  const out = {};
+  for (const slot of SLOTS) {
+    const x = src[slot];
+    if (!x || typeof x !== 'object') continue;
+    const tpl = TEMPLATE_BY_ID[x.t];
+    const stats = {};
+    if (x.s && typeof x.s === 'object') for (const k of ['str', 'dex', 'int', 'con', 'lck']) if (x.s[k] !== undefined) stats[k] = num(x.s[k], 0, 1e7, 0);
+    out[slot] = {
+      uid: `pv:${row.id}:${slot}`, tid: tpl ? tpl.tid : '', slot, type: tpl ? tpl.type : String(x.y || '').slice(0, 12),
+      name: cleanText(String(x.n || (tpl && tpl.name) || 'Przedmiot').slice(0, 40)), icon: ICON_RE.test(x.i) ? x.i : (tpl ? tpl.icon : 'weapons_00'),
+      rarity: Math.floor(num(x.r, 0, RARITIES.length - 1, 0)), lvl: Math.floor(num(x.l, 1, 100000, 1)), up: Math.floor(num(x.u, 0, 10, 0)),
+      stats, dmg: num(x.d, 0, 1e7, 0), armor: num(x.a, 0, 1e7, 0), fx: tpl && tpl.fx ? tpl.fx : '', preview: true,
+      special: tpl && tpl.special ? { ...tpl.special } : undefined,
+    };
+  }
+  return out;
+}
+export function petFromRow(row) {
+  const p = row && row.pet;
+  if (!p || !PET_BY_ID[p.id]) return null;
+  return { id: p.id, lvl: Math.floor(num(p.lvl, 1, PET_MAX_LVL, 1)) };
 }
 
 // ——— Walczący z „snapshotu” innego gracza (asynchroniczne PvP) ———
 const num = (v, lo, hi, d) => { v = Number(v); return Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : d; };
 export function fighterFromRow(row) {
   const f = row.fighter || {};
-  const L = num(row.lvl, 1, 150, 1);
-  const maxHp = num(f.maxHp, 1, 5e7, 100);
+  const L = num(row.lvl, 1, 100000, 1);
+  const maxHp = num(f.maxHp, 1, 5e9, 100);
   // liczba przebudzeń ograniczona poziomem (np. poziom 112 → maks. 2); efekty nakładane lokalnie
   const awak = Math.floor(num(f.awak, 0, Math.min(6, L >= 100 ? 1 + Math.floor((L - 100) / 10) : 0), 0));
-  return applyAwakening({
-    name: row.name, lvl: L, maxHp, hp: maxHp, dmgMin: num(f.dmgMin, 1, 1e6, 10), dmgMax: num(f.dmgMax, 1, 1e6, 12), armor: num(f.armor, 0, 1e6, 0),
+  const fr = applyAwakening({
+    name: row.name, lvl: L, maxHp, hp: maxHp, dmgMin: num(f.dmgMin, 1, 1e8, 10), dmgMax: num(f.dmgMax, 1, 1e8, 12), armor: num(f.armor, 0, 1e8, 0),
     crit: num(f.crit, 0, 65, 5), critDmg: num(f.critDmg, 1, 5, 1.8), dodge: num(f.dodge, 0, 42, 0), block: num(f.block, 0, 30, 0), resist: num(f.resist, 0, 30, 0),
     pierce: num(f.pierce, 0, 0.6, 0), leech: num(f.leech, 0, 30, 0), regen: num(f.regen, 0, 10, 0), skillPct: num(f.skillPct, 0, 200, 0), initPct: num(f.initPct, 0, 50, 0),
     skills: Array.isArray(f.skills) ? f.skills.filter((s) => typeof s === 'string').slice(0, 8) : [], cls: row.cls, netPlayer: true,
   }, row.cls, awak);
+  // siła ponad realny limit dla poziomu (zmodyfikowany zapis) jest przycinana
+  const p = fighterPower(fr), cap = maxPowerFor(L);
+  if (p > cap) scaleFighter(fr, cap / p);
+  return fr;
 }

@@ -4,6 +4,7 @@
 // • Konto lokalne („local”) – gdy serwer nie jest podłączony: konta w tej przeglądarce, hasło jako skrót PBKDF2.
 import * as G from './game.js';
 import * as Net from '../net/online.js';
+import { LEGAL_VERSION } from '../data/legal.js';
 
 const ACC_KEY = 'fho_accounts_v1';
 const SES_KEY = 'fho_session_v1';
@@ -13,8 +14,12 @@ const LOGIN_RE = /^[a-z0-9_.\-ąćęłńóśźż]{3,20}$/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 export const MIN_PASSWORD = 6;
 const FILE_TAG = 'fantasy_heroes_online';
+// konto administratora – przycisk panelu widzi tylko ono; uprawnienia i tak sprawdza serwer (is_admin)
+export const ADMIN_EMAIL = 'madesio2309@gmail.com';
+// link z maila „reset hasła” wraca do gry z #...type=recovery – wykrywamy go przed inicjalizacją klienta Supabase
+const RECOVERY_LINK = typeof location !== 'undefined' && /type=recovery/.test(location.hash || '');
 
-export const Acc = { user: null, dirty: false, syncing: false, lastSync: 0, syncError: '' };
+export const Acc = { user: null, dirty: false, syncing: false, lastSync: 0, syncError: '', recovery: false };
 const listeners = new Set();
 export function onAcc(fn) { listeners.add(fn); return () => listeners.delete(fn); }
 const emit = (t) => { for (const fn of listeners) fn(t); };
@@ -63,6 +68,9 @@ export function authError(msg) {
   if (/password should be|weak password/i.test(m)) return `Hasło jest za słabe (min. ${MIN_PASSWORD} znaków).`;
   if (/relation .*saves.* does not exist|could not find the table/i.test(m)) return 'Na serwerze brakuje tabeli zapisów – uruchom aktualny plik supabase/schema.sql.';
   if (/permission denied for table/i.test(m)) return 'Serwer gry nie ma nadanych uprawnień do tabel – uruchom aktualny plik supabase/schema.sql.';
+  if (/email address not authorized|not authorized/i.test(m)) return 'Serwer pocztowy gry nie może jeszcze wysyłać maili na ten adres (wymagany własny serwer SMTP w Supabase).';
+  if (/email.*invalid|invalid.*email/i.test(m)) return 'Ten adres e-mail jest nieprawidłowy.';
+  if (/same.*password|different from the old/i.test(m)) return 'Nowe hasło musi różnić się od obecnego.';
   return m;
 }
 async function call(promise, label) {
@@ -103,6 +111,9 @@ async function activate(user, { attach = false } = {}) {
   return user;
 }
 const cloudUser = (u) => ({ mode: 'cloud', id: u.id, email: u.email, login: u.email });
+export const isAdminUser = () => !!Acc.user && Acc.user.mode === 'cloud' && (Acc.user.email || '').toLowerCase() === ADMIN_EMAIL;
+// adres powrotu z maili (potwierdzenie, reset hasła, zmiana e-maila) – bieżąca strona gry bez parametrów
+const returnUrl = () => (typeof location !== 'undefined' ? location.origin + location.pathname : undefined);
 
 // przywrócenie sesji po odświeżeniu strony
 export async function restore() {
@@ -110,7 +121,11 @@ export async function restore() {
     const c = await client();
     const d = await call(c.auth.getSession(), 'Sesja');
     const u = d.session && d.session.user;
-    if (u && !u.is_anonymous && u.email) return activate(cloudUser(u));
+    if (u && !u.is_anonymous && u.email) {
+      const user = await activate(cloudUser(u));
+      if (RECOVERY_LINK) { Acc.recovery = true; emit('recovery'); }
+      return user;
+    }
   }
   const s = parse(localStorage.getItem(SES_KEY), 'sesja');
   if (s && s.mode === 'local') {
@@ -121,17 +136,19 @@ export async function restore() {
   return null;
 }
 
-export async function register({ login, password, password2, mode, attach = true }) {
+export async function register({ login, password, password2, mode, attach = true, consent = false }) {
   if (Acc.user) throw new Error('Najpierw wyloguj się z obecnego konta.');
   const err = validate({ login, password, password2 }, mode);
   if (err) throw new Error(err);
+  if (!consent) throw new Error('Aby założyć konto, zaakceptuj Regulamin i Politykę prywatności.');
+  const consentAt = new Date().toISOString();
   if (mode === 'cloud') {
     const c = await client();
     const email = login.trim().toLowerCase();
     // ewentualna sesja anonimowa (gra online bez konta) ustępuje miejsca nowemu kontu
     const cur = await call(c.auth.getSession(), 'Sesja');
     if (cur.session) await call(c.auth.signOut(), 'Wylogowanie');
-    const d = await call(c.auth.signUp({ email, password }), 'Rejestracja');
+    const d = await call(c.auth.signUp({ email, password, options: { emailRedirectTo: returnUrl(), data: { tos_v: LEGAL_VERSION, tos_at: consentAt } } }), 'Rejestracja');
     if (!d.session) return { needConfirm: true, email };
     return { user: await activate(cloudUser(d.user), { attach }) };
   }
@@ -139,9 +156,59 @@ export async function register({ login, password, password2, mode, attach = true
   const id = normLogin(login);
   if (a.users[id]) throw new Error('Taki login jest już zajęty.');
   const salt = newSalt();
-  a.users[id] = { login: login.trim(), salt, hash: await hashPw(password, salt, PBKDF2_ITER), iter: PBKDF2_ITER, created: Date.now(), last: Date.now() };
+  a.users[id] = { login: login.trim(), salt, hash: await hashPw(password, salt, PBKDF2_ITER), iter: PBKDF2_ITER, created: Date.now(), last: Date.now(), tos_v: LEGAL_VERSION, tos_at: consentAt };
   writeAcc(a);
   return { user: await activate({ mode: 'local', id, login: login.trim() }, { attach }) };
+}
+
+// ——— Odzyskiwanie hasła i zmiana e-maila (konta online) ———
+export async function requestPasswordReset(email) {
+  if (!EMAIL_RE.test((email || '').trim())) throw new Error('Podaj poprawny adres e-mail.');
+  const c = await client();
+  await call(c.auth.resetPasswordForEmail(email.trim().toLowerCase(), { redirectTo: returnUrl() }), 'Reset hasła');
+  return true;
+}
+// po wejściu z linku „reset hasła” gracz jest zalogowany sesją odzyskiwania – ustawia nowe hasło
+export async function setNewPassword(password, password2) {
+  if (!Acc.user || Acc.user.mode !== 'cloud') throw new Error('Link odzyskiwania wygasł – poproś o nowy.');
+  const err = validate({ login: Acc.user.email, password, password2 }, 'cloud');
+  if (err) throw new Error(err);
+  const c = await client();
+  await call(c.auth.updateUser({ password }), 'Nowe hasło');
+  Acc.recovery = false;
+  if (typeof history !== 'undefined' && location.hash) history.replaceState(null, '', returnUrl());
+  return true;
+}
+async function verifyCloudPassword(password) {
+  const c = await client();
+  await call(c.auth.signInWithPassword({ email: Acc.user.email, password }), 'Sprawdzenie hasła');
+  return c;
+}
+export async function changeEmail(newEmail, password) {
+  const u = Acc.user;
+  if (!u || u.mode !== 'cloud') throw new Error('Zmiana e-maila dotyczy kont online.');
+  const email = (newEmail || '').trim().toLowerCase();
+  if (!EMAIL_RE.test(email)) throw new Error('Podaj poprawny adres e-mail.');
+  if (email === u.email) throw new Error('To jest Twój obecny adres e-mail.');
+  const c = await verifyCloudPassword(password);
+  const d = await call(c.auth.updateUser({ email }, { emailRedirectTo: returnUrl() }), 'Zmiana e-maila');
+  // bez wymaganego potwierdzenia serwer zmienia adres od razu
+  if (d.user && d.user.email === email) { u.email = email; u.login = email; emit('login'); return { changed: true }; }
+  return { pending: true };
+}
+// usunięcie konta online: serwer usuwa użytkownika, a dane gry (postać, profil, wiadomości) kasują się kaskadowo
+export async function deleteCloudAccount(password) {
+  const u = Acc.user;
+  if (!u || u.mode !== 'cloud') throw new Error('Tę operację można wykonać tylko dla konta online.');
+  const c = await verifyCloudPassword(password);
+  await Net.disconnect();
+  await Net.deleteMyAccount(c);
+  await c.auth.signOut().catch((e) => console.error('Wylogowanie po usunięciu konta', e));
+  localStorage.removeItem(slotFor(u));
+  localStorage.removeItem(SES_KEY);
+  Acc.user = null; Acc.dirty = false;
+  G.setSaveSlot(null);
+  emit('logout');
 }
 
 export async function login({ login, password, mode, attach = false }) {

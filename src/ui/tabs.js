@@ -1,10 +1,12 @@
 // Pięć głównych zakładek
-import { h, icon, uiIcon, itemSlotEl, itemDetails, bar, btn, heroLook, clsBadge } from './dom.js';
+import { h, icon, uiIcon, itemSlotEl, itemDetails, bar, btn, heroLook, clsBadge, skinPreview } from './dom.js';
 import { sfx } from './audio.js';
 import * as G from '../core/game.js';
 import * as Panels from './panels.js';
+import { openProfile } from './profile.js';
 import { CLASSES, STATS, STAT_NAMES, STAT_HINT, SKILLS, TALENTS, TALENT_MAX, OUTFIT_HUES, AURA_COLORS, SKINS, outfitSwatch } from '../data/classes.js';
 import { SLOTS, SLOT_NAMES, RARITIES } from '../data/items.js';
+import { PETS, PET_BY_ID, PET_MAX_LVL, petBonusText } from '../data/pets.js';
 import { ENEMIES, BOSSES, DUNGEONS, LOCATIONS } from '../data/enemies.js';
 import { fmt, fmtTime, weekEnd, nextMidnight } from '../core/util.js';
 import { AWAKEN_LEVELS, ROMAN, TRIALS, TRIAL_PHASES, TRIAL_ATTEMPTS } from '../data/awakening.js';
@@ -111,13 +113,14 @@ function adventures(app) {
 function character(app) {
   const P = G.P;
   const awkReady = G.trialUnlocked() && G.trialAttemptsLeft() > 0;
-  const st = subtabs(app, 'character', [['equip', 'Ekwipunek'], ['stats', 'Statystyki'], ['talents', 'Talenty'], ['skills', 'Umiejętności'], ['awaken', awkReady ? 'Przebudzenie ⚔' : 'Przebudzenie'], ['look', 'Wygląd']], 'equip');
+  const st = subtabs(app, 'character', [['equip', 'Ekwipunek'], ['stats', 'Statystyki'], ['talents', 'Talenty'], ['skills', 'Umiejętności'], ['awaken', awkReady ? 'Przebudzenie ⚔' : 'Przebudzenie'], ['pets', P.pets.eggs > 0 ? `Pety 🥚${P.pets.eggs}` : 'Pety'], ['look', 'Wygląd']], 'equip');
   let body, live = null;
   if (st.cur === 'equip') body = equipView(app);
   else if (st.cur === 'stats') body = statsView(app);
   else if (st.cur === 'talents') body = talentsView(app);
   else if (st.cur === 'skills') body = skillsView(app);
   else if (st.cur === 'awaken') ({ body, live } = awakenView(app));
+  else if (st.cur === 'pets') body = petsView(app);
   else body = lookView(app);
   return { head: head(`${P.name}`, st.el, h('div', { class: 'pow-pill' }, uiIcon('swords', 'ico'), 'Siła ', h('b', {}, fmt(G.power())))), body, live };
 }
@@ -139,7 +142,7 @@ function awakenView(app) {
       h('span', { class: 'awk-st' }, status));
   }));
   const intro = h('div', { class: 'pts-box awk-intro' },
-    h('div', {}, h('b', {}, `Przebudzenia: ${awak}/${AWAKEN_LEVELS.length}`), h('div', { class: 'muted' }, `Limit poziomu: ${G.levelCap(P)} / ${G.MAX_LVL}`)),
+    h('div', {}, h('b', {}, `Przebudzenia: ${awak}/${AWAKEN_LEVELS.length}`), h('div', { class: 'muted' }, Number.isFinite(G.levelCap(P)) ? `Limit poziomu: ${G.levelCap(P)}` : 'Limit poziomu: brak – rozwój bez końca')),
     h('div', { class: 'muted' }, 'Każde Przebudzenie: nowa umiejętność klasy, +7% siły i +10 do limitu poziomu.'));
   const blocked = G.expBlocked()
     ? h('div', { class: 'awk-block' }, '⛔ ', h('b', {}, `Poziom ${P.lvl} – próg Przebudzenia. `), P.exp >= G.expNext(P.lvl) ? 'Pasek EXP jest pełny – nadmiar przepada. ' : 'EXP zbiera się tylko do pełnego paska. ', 'Pokonaj bossa Próby, aby awansować dalej.')
@@ -147,7 +150,7 @@ function awakenView(app) {
   let card, reward = null, log = null, live = null;
   if (k === null) {
     card = h('div', { class: 'awk-done' }, h('div', { class: 'awk-rn big', style: { background: TRIALS[5].glow } }, 'VI'),
-      h('div', {}, h('h3', {}, 'Wszystkie Przebudzenia ukończone!'), h('div', { class: 'muted' }, 'Osiągnąłeś szczyt mocy: poziom 150 i komplet 6 umiejętności Przebudzenia. Skórka „Przebudzony” czeka w zakładce Wygląd.')));
+      h('div', {}, h('h3', {}, 'Wszystkie Przebudzenia ukończone!'), h('div', { class: 'muted' }, 'Osiągnąłeś pełnię mocy Przebudzeń – od teraz poziomy rosną bez limitu, a Otchłań (Lochy) czeka z 2000 piętrami. Skórka „Przebudzony” czeka w zakładce Wygląd.')));
   } else {
     const T = TRIALS[k], B = BOSSES[T.boss], S = skills[k];
     const glowImg = { filter: `drop-shadow(0 0 14px ${T.glow}) drop-shadow(0 0 4px ${T.glow}) drop-shadow(3px 3px 0 #000)` };
@@ -221,11 +224,13 @@ function equipView(app) {
   const C = CLASSES[P.cls];
   const look = C.looks[P.look || 0];
   const hue = OUTFIT_HUES[P.hue || 0]?.hue || 0;
+  const pet = P.pets.active && PET_BY_ID[P.pets.active];
   const doll = h('div', { class: 'doll' },
     h('div', { class: 'doll-col' }, DOLL_LEFT.map(slotEl)),
-    h('div', { class: 'doll-hero' },
+    h('div', { class: 'doll-hero', style: { backgroundImage: 'url(./assets/bg/armory.jpg)' } },
       h('div', { class: 'doll-plate' }, h('span', { class: 'doll-lv' }, P.lvl), C.name),
       h('img', { class: 'doll-img', src: `./assets/heroes/${look}.webp`, alt: '', draggable: 'false', style: { filter: hue ? `hue-rotate(${Math.round(hue * 360)}deg)` : '' } }),
+      pet ? h('img', { class: 'doll-pet', src: `./assets/pets/${pet.img}.webp`, alt: pet.name, title: `${pet.name} (poz. ${P.pets.owned[pet.id]}) · ${petBonusText(pet.id, P.pets.owned[pet.id])}`, draggable: 'false', onclick: () => app.setSub('character', 'pets') }) : null,
       h('div', { class: 'doll-pow' }, uiIcon('swords', 'ico'), 'Siła ', h('b', {}, fmt(G.power())))),
     h('div', { class: 'doll-col' }, DOLL_RIGHT.map(slotEl), h('div', { class: 'doll-slot spacer' })));
   const tile = (label, v, cls = '') => h('div', { class: 'stile ' + cls }, h('span', {}, label), h('b', {}, v));
@@ -241,7 +246,48 @@ function equipView(app) {
       h('div', { class: 'row gap' }, btn('Załóż najlepsze', () => G.autoEquip(), 'primary small', { id: 'btn-autoequip' }), btn('Sprzedaj zbędne', () => G.sellJunk(), 'ghost small'))),
     bag,
     h('div', { class: 'drop-sell', 'data-drop': 'sell' }, uiIcon('gold', 'ico'), 'Upuść tutaj, aby sprzedać'),
-    h('div', { class: 'tip' }, '✋ Przeciągnij przedmiot na slot postaci, aby go założyć (na telefonie: przytrzymaj i przesuń). Przeciągnij założony przedmiot do plecaka, aby go zdjąć. ▲ = zwiększy Twoją siłę.'));
+    h('div', { class: 'tip' }, '✋ Przeciągnij przedmiot na slot postaci, aby go założyć (na telefonie: przytrzymaj i przesuń). Przeciągnij założony przedmiot do plecaka, aby go zdjąć. ▲ = zwiększy Twoją siłę. 🖱 Najedź myszą na przedmiot, aby porównać go z założonym.'));
+}
+// ——— Pety: kolekcja, aktywny towarzysz, wykluwanie jaj ———
+function petsView(app) {
+  const P = G.P;
+  const active = P.pets.active && PET_BY_ID[P.pets.active];
+  const hatch = () => {
+    const r = G.hatchEgg();
+    if (!r) return;
+    const R = RARITIES[r.pet.rarity];
+    sfx(r.pet.rarity >= 4 ? 'levelup' : 'chest', 0.8);
+    let m;
+    m = app.modal('Wykluwanie!', h('div', { class: 'center hatch' },
+      h('div', { class: 'hatch-burst', style: { '--rc': R.color } }, h('img', { class: 'hatch-pet', src: `./assets/pets/${r.pet.img}.webp`, alt: r.pet.name })),
+      h('div', { class: 'loot-tag', style: { background: R.color } }, R.name),
+      h('h3', {}, r.pet.name),
+      h('div', {}, r.isNew ? 'Nowy towarzysz w kolekcji!' : r.up ? `Duplikat – ${r.pet.name} awansuje na poziom ${r.lvl}!` : `Duplikat na maks. poziomie – otrzymujesz ${r.cr} 💎.`),
+      h('div', { class: 'muted' }, petBonusText(r.pet.id, r.lvl)),
+      h('div', { class: 'row center gap' },
+        P.pets.active !== r.pet.id ? btn('Ustaw jako aktywnego', () => { G.setActivePet(r.pet.id); m.close(); }, 'primary') : null,
+        btn('Super!', () => m.close(), P.pets.active === r.pet.id ? 'primary' : ''))), { cls: 'narrow' });
+  };
+  return h('div', { class: 'pets' },
+    h('div', { class: 'pts-box pet-top' },
+      h('div', { class: 'row gap' }, uiIcon('egg', 'big-ico'), h('div', {}, h('b', {}, `Jaja: ${P.pets.eggs}`), h('div', { class: 'muted' }, 'Jaja zdobywasz w Otchłani (co 50 pięter), z koła fortuny i w sklepie.'))),
+      h('div', { class: 'row gap' },
+        btn('🥚 Wykluj', hatch, 'primary', { disabled: P.pets.eggs <= 0 || undefined, id: 'btn-hatch' }),
+        btn('Sklep', () => Panels.openShop(app, 'crystal'), 'ghost small'))),
+    active ? h('div', { class: 'pet-active' }, h('img', { src: `./assets/pets/${active.img}.webp`, alt: '' }),
+      h('div', {}, h('div', { class: 'muted' }, 'Aktywny towarzysz'), h('b', {}, `${active.name} · poz. ${P.pets.owned[active.id]}/${PET_MAX_LVL}`), h('div', {}, petBonusText(active.id, P.pets.owned[active.id])))) : h('div', { class: 'tip' }, 'Nie masz jeszcze aktywnego peta – wykluj jajo!'),
+    h('div', { class: 'pet-grid' }, PETS.map((p) => {
+      const lvl = P.pets.owned[p.id] || 0;
+      const R = RARITIES[p.rarity];
+      return h('div', { class: 'pet-card' + (lvl ? '' : ' locked') + (P.pets.active === p.id ? ' sel' : ''), style: { '--rc': R.color } },
+        h('div', { class: 'pet-img' }, h('img', { src: `./assets/pets/${p.img}.webp`, alt: p.name })),
+        h('div', { class: 'pet-rar', style: { color: R.color } }, R.name),
+        h('b', {}, p.name),
+        h('div', { class: 'muted' }, lvl ? `Poziom ${lvl}/${PET_MAX_LVL}` : '??? – nieodkryty'),
+        h('div', { class: 'pet-bonus' }, petBonusText(p.id, Math.max(1, lvl))),
+        lvl ? (P.pets.active === p.id ? btn('Aktywny', () => G.setActivePet(null), 'small', { title: 'Kliknij, aby schować peta' }) : btn('Wybierz', () => { G.setActivePet(p.id); sfx('click'); }, 'primary small', { 'data-pet': p.id })) : h('div', { class: 'muted pet-desc' }, p.desc));
+    })),
+    h('div', { class: 'tip' }, '💡 Pety dają wyłącznie bonusy pasywne (nie walczą). Duplikat z jaja podnosi poziom peta (+20% bonusu za poziom, maks. 10). Pet chodzi obok bohatera i widzą go inni gracze.'));
 }
 const row = (k, v) => h('div', { class: 'srow' }, h('span', {}, k), h('b', {}, v));
 function statsView(app) {
@@ -303,11 +349,13 @@ function lookView(app) {
     h('label', { class: 'lbl' }, 'Skórki (kosmetyczne – bez wpływu na siłę)'),
     h('div', { class: 'skins' }, Object.entries(SKINS).map(([id, s]) => {
       const own = P.skinsOwned.includes(id);
-      return h('div', { class: 'skin' + (P.skin === id ? ' sel' : '') + (own ? '' : ' locked') },
-        h('div', { class: 'skin-sw', style: { background: `linear-gradient(135deg, rgb(${s.tint.map((x) => Math.min(255, x * 170)).join(',')}), ${s.glow || '#555'})` } }),
+      return h('div', { class: 'skin' + (P.skin === id ? ' sel' : '') + (own ? '' : ' locked'), 'data-skin': id },
+        h('div', { class: 'skin-pv' }, skinPreview(P.cls, P.look, P.hue, id, 130), own ? null : h('span', { class: 'skin-lock' }, '🔒')),
         h('b', {}, s.name), h('div', { class: 'muted' }, s.desc),
-        own ? btn(P.skin === id ? 'Założona' : 'Załóż', () => G.buySkin(id), 'small', { disabled: P.skin === id || undefined })
-          : s.src === 'shop' ? btn(`${s.cost} 💎`, () => G.buySkin(id), 'gold small') : h('span', { class: 'lock' }, '🔒 Do zdobycia'));
+        h('div', { class: 'row gap wrap' },
+          own ? btn(P.skin === id ? 'Założona' : 'Załóż', () => G.buySkin(id), 'small', { disabled: P.skin === id || undefined })
+            : s.src === 'shop' ? btn(`${s.cost} 💎`, () => G.buySkin(id), 'gold small') : h('span', { class: 'lock' }, '🔒 Do zdobycia'),
+          P.skin !== id ? btn('👁 Przymierz', () => app.trySkin(id), 'ghost small', { title: 'Podgląd na scenie przez kilka sekund', 'data-try': id }) : null));
     })),
     h('label', { class: 'lbl' }, 'Ewolucja wyglądu wraz z poziomem'),
     h('div', { class: 'tiers' }, tiers.map(([l, t], i) => h('div', { class: 'tierx' + (tier > i ? ' on' : '') }, h('b', {}, `Poz. ${l}`), t))),
@@ -315,11 +363,51 @@ function lookView(app) {
 }
 
 // ——— LOCHY ———
+// Otchłań: nieskończony loch – 2000 pięter od 100 poziomu
+function abyssView(app) {
+  const P = G.P;
+  const A = P.abyss;
+  const unlocked = G.abyssUnlocked();
+  const f = Math.min(G.ABYSS_FLOORS, A.floor + 1);
+  const done = A.floor >= G.ABYSS_FLOORS;
+  let foe = null;
+  if (unlocked && !done) {
+    const { s, B } = G.abyssEnemy(f);
+    foe = h('div', { class: 'd-next abyss-foe' }, h('img', { src: `./assets/${s.img}` }),
+      h('div', {}, h('div', { class: 'muted' }, `Piętro ${f}${s.boss ? ' – BOSS' : ''} · poziom wroga ${s.L}`), h('b', {}, s.name), diffTag(fPower(B))));
+  }
+  const ms = G.nextAbyssMilestone();
+  // pasek 10 pięter bieżącej dziesiątki
+  const base = Math.floor(A.floor / 10) * 10;
+  const floors = h('div', { class: 'floors abyss-floors' }, Array.from({ length: 10 }, (_, i) => h('i', { class: (base + i + 1 <= A.floor ? 'on' : '') + (i === 9 ? ' boss' : '') })));
+  return h('div', { class: 'abyss' },
+    h('div', { class: 'abyss-card' + (unlocked ? '' : ' locked'), style: { backgroundImage: 'url(./assets/bg/abyss.jpg)' } },
+      h('div', { class: 'qc-shade' }),
+      h('div', { class: 'abyss-in' },
+        h('div', { class: 'qc-loc' }, 'Nieskończony Loch'),
+        h('h3', {}, 'Otchłań'),
+        h('div', { class: 'abyss-floor' }, h('b', {}, fmt(A.floor)), h('span', {}, ` / ${fmt(G.ABYSS_FLOORS)} pięter`)),
+        bar(A.floor / G.ABYSS_FLOORS, 'abyss'),
+        unlocked ? floors : null,
+        unlocked ? foe : h('div', { class: 'muted' }, `Otchłań otwiera się na ${G.ABYSS_REQ} poziomie. Brakuje Ci ${G.ABYSS_REQ - P.lvl} poz.`),
+        unlocked ? h('div', { class: 'row gap wrap' },
+          done ? h('span', { class: 'done-tag' }, '✔ Otchłań zdobyta!') : btn(`⚔ Walcz (🌀${A.keys})`, () => app.fight(() => G.abyssBattle()), 'primary', { disabled: A.keys <= 0 || undefined, id: 'btn-abyss' }),
+          h('span', { class: 'muted' }, `Klucze Otchłani: ${A.keys}/${G.ABYSS_KEYS} (odnowa o północy)`)) : null)),
+    ms ? h('div', { class: 'abyss-ms' }, uiIcon('legendChest', 'ico'), h('div', {}, h('b', {}, `Nagroda na piętrze ${ms.floor}: `), ms.rewards.join(' · '))) : null,
+    h('div', { class: 'sec-head' }, h('h4', {}, 'Kamienie milowe')),
+    h('div', { class: 'abyss-list' },
+      [[10, 'co 10 pięter', '5 💎 + epicki łup'], [50, 'co 50 pięter', 'jajo peta'], [100, 'co 100 pięter', 'legendarny łup + 50 💎'], [500, 'od 500. piętra', '35% szans na mityczny co 100 pięter'],
+        [1000, 'od 1000. piętra', 'gwarantowany mityczny co 250 pięter'], [500, 'piętro 500', 'skórka „Wędrowiec Otchłani”'], [2000, 'piętro 2000', 'skórka „Władca Otchłani”']]
+        .map(([fl, a, b]) => h('div', { class: 'abyss-li' + (A.best >= fl ? ' ok' : '') }, h('b', {}, a), h('span', {}, b)))),
+    h('div', { class: 'tip' }, `💡 Każde piętro jest trudniejsze (poziom wroga = 100 + 0,45 × piętro). Przegrana kosztuje tylko klucz – postęp zostaje. Twój rekord: ${fmt(A.best || 0)}. Ranking Otchłani znajdziesz w Rankingach.`));
+}
 function dungeons(app) {
   const P = G.P;
-  const st = subtabs(app, 'dungeons', [['dungeons', 'Lochy'], ['challenges', 'Wyzwania dnia'], ['wboss', 'Boss Światowy']], 'dungeons');
+  const st = subtabs(app, 'dungeons', [['dungeons', 'Lochy'], ['abyss', G.abyssUnlocked() ? `Otchłań 🌀${P.abyss.keys}` : 'Otchłań 🔒'], ['challenges', 'Wyzwania dnia'], ['wboss', 'Boss Światowy']], 'dungeons');
   let body, live = null;
-  if (st.cur === 'dungeons') {
+  if (st.cur === 'abyss') {
+    body = abyssView(app);
+  } else if (st.cur === 'dungeons') {
     body = h('div', { class: 'dlist' }, DUNGEONS.map((D, d) => {
       const unlocked = G.dungeonUnlocked(d);
       const prog = P.dungeon.progress[d];
@@ -414,7 +502,9 @@ function arena(app) {
           h('div', { class: 'opp-in' },
             h('b', {}, b.name, onlineDot()), h('div', { class: 'muted' }, `${CLASSES[b.cls].name} · poz. ${lv}`),
             h('div', {}, '🏆 ', b.rating), diffTag(fPower(f)),
-            btn('⚔ Walcz', () => app.fight(() => G.arenaBattle(b.id)), 'primary small', { disabled: P.arena.tickets <= 0 || undefined, 'data-opp': b.id })));
+            h('div', { class: 'row gap wrap' },
+              btn('⚔ Walcz', () => app.fight(() => G.arenaBattle(b.id)), 'primary small', { disabled: P.arena.tickets <= 0 || undefined, 'data-opp': b.id }),
+              btn('👁 Ekwipunek', () => openProfile(app, b.id.slice(4)), 'ghost small', { 'data-profile': b.id }))));
       })),
       empty,
       online ? h('div', { class: 'row center' }, btn('Odśwież rywali', () => { P.arena.opp = []; app.render(); }, 'ghost small')) : null,
@@ -477,7 +567,7 @@ function guild(app) {
     body = h('div', {},
       h('div', { class: 'pts-box' }, h('div', {}, 'Poziom gildii: ', h('b', {}, glvl), h('span', { class: 'muted' }, ` · Bonus: +${G.guildBonus()}% złota i EXP`)),
         h('div', {}, `${roster.length}/${G.GUILD_MAX} członków`)),
-      h('div', { class: 'lb' }, roster.map((m, i) => h('div', { class: 'lb-row' + (m.me ? ' me' : '') }, h('span', { class: 'lb-pos' }, i + 1), clsBadge(m.cls), h('span', { class: 'lb-name' }, m.name, i === 0 ? ' 👑' : '', m.online ? onlineDot() : null), h('span', { class: 'muted' }, `poz. ${m.lvl}`), h('b', {}, fmt(m.power))))),
+      h('div', { class: 'lb' }, roster.map((m, i) => h('div', { class: 'lb-row click' + (m.me ? ' me' : ''), title: 'Pokaż profil i ekwipunek', onclick: () => openProfile(app, m.me ? 'me' : m.id) }, h('span', { class: 'lb-pos' }, i + 1), clsBadge(m.cls), h('span', { class: 'lb-name' }, m.name, i === 0 ? ' 👑' : '', m.online ? onlineDot() : null), h('span', { class: 'muted' }, `poz. ${m.lvl}`), h('b', {}, fmt(m.power))))),
       h('div', { class: 'row center' }, btn('Opuść gildię', () => { if (confirm('Na pewno opuścić gildię?')) G.leaveGuild(); }, 'ghost small')));
   } else if (st.cur === 'boss') {
     const gi = G.guildBossInfo();

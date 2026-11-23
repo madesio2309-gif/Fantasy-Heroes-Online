@@ -29,6 +29,7 @@ jobs:
       # szybki test logiki (testy kalibracji z losowością uruchamiaj lokalnie: npm test)
       - run: node asset_src/online_test.mjs
       - run: node asset_src/accounts_test.mjs
+      - run: node asset_src/update8_test.mjs
       - run: npm run build
       - uses: actions/upload-pages-artifact@v3
         with:

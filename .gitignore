@@ -10,6 +10,9 @@ asset_src/anim/
 asset_src/raw/
 asset_src/contact/
 asset_src/results/
+asset_src/gen8/raw/
+asset_src/gen8/sfx/*
+!asset_src/gen8/sfx/*.py
 
 # system / edytory
 .DS_Store

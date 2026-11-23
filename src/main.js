@@ -6,9 +6,10 @@ import '@fontsource/rubik/700.css';
 import './style.css';
 import { App } from './ui/app.js';
 import * as G from './core/game.js';
+import { audioDebug } from './ui/audio.js';
 
 const app = new App(document.getElementById('app'));
-window.__fho = { app, G };
+window.__fho = { app, G, audio: audioDebug };
 app.boot().catch((e) => {
   console.error(e);
   app.toast('Błąd ładowania gry: ' + e.message, 'bad');

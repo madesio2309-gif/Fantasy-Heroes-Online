@@ -1,16 +1,17 @@
 // Formuły: statystyki postaci, siła, EXP, generowanie przedmiotów i przeciwników
 import { CLASSES, SKILLS, TALENTS, STATS } from '../data/classes.js';
-import { TEMPLATES, LEGENDARIES, RARITIES, TEMPLATE_BY_ID } from '../data/items.js';
+import { TEMPLATES, LEGENDARIES, MYTHICS, RARITIES, TEMPLATE_BY_ID } from '../data/items.js';
 import { R, clamp } from './util.js';
 import { AWAKENINGS, AWAKEN_LEVELS } from '../data/awakening.js';
+import { petBonus } from '../data/pets.js';
 
-export const MAX_LVL = 150;
-// maksymalny poziom osiągalny bez kolejnego Przebudzenia (100 → 110 → … → 150)
-export const levelCap = (p) => Math.min(MAX_LVL, AWAKEN_LEVELS[0] + 10 * (p.awak || 0));
+// brak maksymalnego poziomu – po 6. Przebudzeniu poziomy rosną bez limitu
+export const MAX_LVL = Infinity;
+// maksymalny poziom osiągalny bez kolejnego Przebudzenia (100 → 110 → … → 150 → bez limitu)
+export const levelCap = (p) => ((p.awak || 0) >= AWAKEN_LEVELS.length ? Infinity : AWAKEN_LEVELS[0] + 10 * (p.awak || 0));
 export const HP_MULT = 1.6; // wydłuża walki do 10–20 s
 
 export function expNext(l) {
-  if (l >= MAX_LVL) return Infinity;
   return Math.round(50 * Math.pow(l, 1.8) + 50);
 }
 // tempo progresu: ułamek poziomu na minutę przygody
@@ -55,6 +56,9 @@ export function calcStats(p, equipOverride) {
   }
   const bon = { ...tb };
   for (const k in special) bon[k] = (bon[k] || 0) + special[k];
+  // aktywny pet: wyłącznie bonusy pasywne
+  const pet = p.pets && p.pets.active;
+  if (pet) for (const [k, v] of Object.entries(petBonus(pet, p.pets.owned?.[pet]))) bon[k] = (bon[k] || 0) + v;
   if (p.guildBonus) { bon.goldPct = (bon.goldPct || 0) + p.guildBonus; bon.expPct = (bon.expPct || 0) + p.guildBonus; }
   const L = p.lvl;
   const main = tot[cls.main];
@@ -85,6 +89,9 @@ export function powerOf(st) {
 // umiejętności przebudzenia nie są widoczne w statystykach – dolicz je do siły (+7% za każde)
 export const awakenPowerMul = (p) => 1 + 0.07 * (p.awak || 0);
 export const playerPower = (p) => Math.round(powerOf(calcStats(p)) * awakenPowerMul(p));
+// górny limit siły na poziomie L (≈3× realnego maksimum: mityczny ekwipunek +10, pełne talenty, pet, Przebudzenia)
+// – ta sama formuła działa na serwerze (fho_max_power) i przy wczytywaniu rywali
+export const maxPowerFor = (L) => 18000 + 7200 * Math.max(1, L);
 
 // Efekty umiejętności przebudzenia (pierwsze n z listy klasy) nakładane na walczącego
 export function applyAwakening(f, cls, n) {
@@ -203,7 +210,11 @@ export function genItem({ lvl, rarity = 0, cls, slot, tid, rnd = R }) {
   slot = slot || rnd.pick(SL);
   let tpl;
   if (tid) tpl = TEMPLATE_BY_ID[tid];
-  else if (rarity === 4 && rnd() < 0.45) {
+  else if (rarity >= 5) {
+    // mityczne zawsze są unikatowe; broń dopasowana do klasy
+    const fits = (t) => (slot ? t.slot === slot : true) && (t.slot !== 'weapon' || CLASSES[cls].weapon.includes(t.type));
+    tpl = rnd.pick(MYTHICS.filter(fits));
+  } else if (rarity === 4 && rnd() < 0.45) {
     const leg = LEGENDARIES.filter((t) => t.slot === slot && (slot !== 'weapon' || CLASSES[cls].weapon.includes(t.type)));
     if (leg.length) tpl = rnd.pick(leg);
   }
