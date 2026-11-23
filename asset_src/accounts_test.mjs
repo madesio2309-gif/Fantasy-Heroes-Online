@@ -10,6 +10,8 @@ async function rejects(fn, re, m) {
 }
 const hero = (name, cls = 'warrior') => G.newPlayer({ name, cls, look: 0, hue: 0, aura: 0 });
 const L = 'local';
+// test nigdy nie łączy się z prawdziwym serwerem z config.js – domyślny klient to atrapa bez sesji
+if (Net.getConfig()) Net.setClientForTests(Net.getConfig(), fakeSupabase().client);
 
 // ——— Konta lokalne ———
 await rejects(() => A.register({ login: 'ab', password: 'tajne123', password2: 'tajne123', mode: L }), /Login/, 'za krótki login odrzucony');
