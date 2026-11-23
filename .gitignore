@@ -1,0 +1,21 @@
+# zależności i build
+node_modules/
+dist/
+
+# lokalne podglądy i zrzuty z testów
+.preview/
+
+# robocze pliki produkcji grafiki (duże; gotowe zasoby gry są w public/)
+asset_src/anim/
+asset_src/raw/
+asset_src/contact/
+asset_src/results/
+
+# system / edytory
+.DS_Store
+Thumbs.db
+*.log
+.vscode/
+.idea/
+.env
+.env.*

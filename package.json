@@ -1,0 +1,21 @@
+{
+  "name": "fantasy-heroes-online",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "node asset_src/online_test.mjs && node asset_src/accounts_test.mjs && node asset_src/awakening_test.mjs && node asset_src/balance_test.mjs"
+  },
+  "dependencies": {
+    "@fontsource/cinzel": "^5.0.0",
+    "@fontsource/rubik": "^5.0.0",
+    "@supabase/supabase-js": "^2.119.2",
+    "three": "^0.170.0"
+  },
+  "devDependencies": {
+    "vite": "^6.0.0"
+  }
+}
