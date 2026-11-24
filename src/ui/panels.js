@@ -1,5 +1,6 @@
 // Panele szybkiego dostępu (modale): Idle, Dzienne, Sklep, Wydarzenie, Rankingi, Czat, Ustawienia
-import { h, icon, uiIcon, itemSlotEl, itemDetails, bar, btn, clsBadge, fill } from './dom.js';
+import { h, icon, uiIcon, itemSlotEl, itemDetails, bar, btn, clsBadge, fill, vipTag } from './dom.js';
+import { VIP, VIP_PERKS } from '../data/vip.js';
 import { sfx, setMusic, setSound, getVolumes, setVolume, onVolumeChange } from './audio.js';
 import * as G from '../core/game.js';
 import * as Acc from '../core/accounts.js';
@@ -8,6 +9,7 @@ import { RARITIES } from '../data/items.js';
 import { PET_EGG_COST } from '../data/pets.js';
 import { APP_VERSION } from '../version.js';
 import { fmt, fmtTime, weekEnd, nextMidnight } from '../core/util.js';
+import { fmtIn } from '../core/schedule.js';
 import { buyPrice } from '../core/formulas.js';
 import { LEAGUES } from '../core/world.js';
 import { openProfile } from './profile.js';
@@ -40,8 +42,8 @@ export function openIdle(app) {
     const r = G.idleRates();
     fill(body, 
       h('div', { class: 'idle-top' }, uiIcon('hourglass', 'big-ico'),
-        h('div', {}, h('div', { class: 'muted' }, 'Twój bohater pracuje, nawet gdy Ciebie nie ma (maks. 12 godzin).'),
-          h('div', { class: 'idle-time' }, fmtTime(p.ms), ' / 12g 00m'), bar(p.ms / G.IDLE_CAP_MS, 'idle'))),
+        h('div', {}, h('div', { class: 'muted' }, `Twój bohater pracuje, nawet gdy Ciebie nie ma (maks. ${Math.round(p.cap / 3600000)} godzin).`, G.isVip() ? h('span', { class: 'vip-tag', title: `VIP: Idle do ${VIP.idleHours} godz.` }, `VIP ${VIP.idleHours} h`) : null),
+          h('div', { class: 'idle-time' }, fmtTime(p.ms), ' / ', fmtTime(p.cap)), bar(p.ms / p.cap, 'idle'))),
       h('div', { class: 'reward-line big' }, h('span', {}, uiIcon('gold', 'ico'), fmt(p.gold), ' zł'), h('span', {}, uiIcon('star', 'ico'), fmt(p.exp), ' EXP'), p.item ? h('span', {}, uiIcon('chest', 'ico'), 'przedmiot') : null),
       h('div', { class: 'muted center' }, `Tempo: ${fmt(r.gold * 60)} zł/h · ${fmt(r.exp * 60)} EXP/h${p.full ? ' · ⚠ Limit osiągnięty!' : ''} · Po 2h dodatkowy przedmiot`),
       btn('Odbierz jednym kliknięciem', () => {
@@ -106,6 +108,8 @@ export function openShop(app, tab = 'items') {
       content = h('div', {},
         h('div', { class: 'tip' }, '💎 Kryształy zdobywasz grając: misje dzienne, logowanie, wyzwania, bossowie, sezony areny i wydarzenia. Nie ma zakupów za prawdziwe pieniądze – nikt nie kupi sobie przewagi.'),
         h('div', { class: 'cshop' },
+          h('div', { class: 'citem vipc' }, h('div', { class: 'vip-crown-big' }, '👑'), h('b', {}, 'VIP'), h('div', { class: 'muted' }, G.isVip() ? `Aktywny do ${new Date(G.vipUntil()).toLocaleDateString('pl-PL')}` : 'Wygoda i kosmetyka – bez przewagi w walce'),
+            btn(G.isVip() ? 'Twoje korzyści' : 'Co daje VIP?', () => { m.close(); openVipInfo(app); }, 'small', { id: 'btn-vip-info' })),
           h('div', { class: 'citem mythic' }, uiIcon('mythicChest', 'big-ico'), h('b', {}, 'Skrzynia Mityczna'), h('div', { class: 'muted' }, `Legendarny przedmiot (90%) lub mityczny (10%) na Twoim poziomie`),
             btn(`${fmt(G.MYTHIC_CHEST_COST)} 💎`, () => { const it = G.buyMythicChest(); if (it) { m.close(); showLoot(app, 'Skrzynia Mityczna', it); } }, 'gold small', { id: 'btn-mythic-chest' })),
           h('div', { class: 'citem' }, uiIcon('egg', 'big-ico'), h('b', {}, 'Jajo Peta'), h('div', { class: 'muted' }, `Wykluj peta w zakładce Postać › Pety (masz: ${P.pets.eggs})`),
@@ -140,6 +144,19 @@ export function showLoot(app, title, it) {
   return m;
 }
 
+// ——— VIP: status i korzyści ———
+export function openVipInfo(app) {
+  const on = G.isVip();
+  const until = G.vipUntil();
+  const body = h('div', { class: 'vip-info' },
+    h('div', { class: 'vip-head' + (on ? ' on' : '') }, h('div', { class: 'vip-crown-big' }, '👑'),
+      h('div', {}, h('b', {}, on ? 'Masz aktywnego VIP-a' : 'Nie masz aktywnego VIP-a'),
+        h('div', { class: on ? '' : 'muted' }, on ? `do ${new Date(until).toLocaleString('pl-PL', { dateStyle: 'long', timeStyle: 'short' })} · zostało ${fmtIn(until - Date.now())}` : 'VIP przyznaje obecnie administracja gry, np. za konkursy i eventy na Discordzie.'))),
+    h('div', { class: 'vip-perks' }, VIP_PERKS.map(([ic, txt]) => h('div', { class: 'vip-perk' + (on ? ' on' : '') }, h('span', { class: 'vip-perk-ic' }, ic), h('span', {}, txt)))),
+    h('div', { class: 'tip' }, '💡 VIP nie zwiększa siły w walce. Po wygaśnięciu przedmioty z większego plecaka zostają, ale nowe trafiają do niego dopiero, gdy zwolni się miejsce.'));
+  return app.modal('VIP', body, { cls: 'narrow' });
+}
+
 export function openEvent(app) {
   const P = G.P;
   const ev = G.currentEvent();
@@ -172,8 +189,8 @@ export function leaderboardView(app, kind, onKind) {
     h('div', { class: 'subtabs' }, [['arena', 'Arena'], ['lvl', 'Poziom'], ['power', 'Siła'], ['abyss', 'Otchłań']].map(([id, n]) => h('button', { class: 'st' + (kind === id ? ' sel' : ''), onclick: () => onKind(id) }, n))),
     h('div', { class: 'pts-box' }, 'Twoja pozycja: ', h('b', {}, `#${meIdx + 1}`), ` z ${rows.length} graczy`),
     h('div', { class: 'lb' }, top.map((r, i) => h('div', { class: 'lb-row click' + (r.me ? ' me' : ''), title: 'Pokaż profil i ekwipunek', 'data-pid': r.me ? 'me' : r.id, onclick: () => open(r) }, h('span', { class: 'lb-pos' }, i < 3 ? ['🥇', '🥈', '🥉'][i] : i + 1), clsBadge(r.cls),
-      h('span', { class: 'lb-name' }, r.name, r.online ? h('span', { class: 'online-dot', title: 'Prawdziwy gracz online' }) : null, h('small', { class: 'muted' }, ' ' + r.guild)), kind !== 'lvl' ? h('span', { class: 'muted' }, `poz. ${r.lvl}`) : null, h('b', {}, fmt(r[key])))),
-      meIdx >= 50 ? h('div', { class: 'lb-row me click', onclick: () => open(rows[meIdx]) }, h('span', { class: 'lb-pos' }, meIdx + 1), clsBadge(rows[meIdx].cls), h('span', { class: 'lb-name' }, rows[meIdx].name), h('b', {}, fmt(rows[meIdx][key]))) : null),
+      h('span', { class: 'lb-name' }, r.name, vipTag(G.isVipId(r.me ? 'me' : r.id)), r.online ? h('span', { class: 'online-dot', title: 'Prawdziwy gracz online' }) : null, h('small', { class: 'muted' }, ' ' + r.guild)), kind !== 'lvl' ? h('span', { class: 'muted' }, `poz. ${r.lvl}`) : null, h('b', {}, fmt(r[key])))),
+      meIdx >= 50 ? h('div', { class: 'lb-row me click', onclick: () => open(rows[meIdx]) }, h('span', { class: 'lb-pos' }, meIdx + 1), clsBadge(rows[meIdx].cls), h('span', { class: 'lb-name' }, rows[meIdx].name, vipTag(G.isVip())), h('b', {}, fmt(rows[meIdx][key]))) : null),
     h('div', { class: 'muted center' }, `${label} · kliknij gracza, aby zobaczyć jego ekwipunek`));
 }
 export function openRankings(app) {
@@ -232,7 +249,7 @@ function fillChat(list, channel) {
   const app = list.__app;
   const msgs = (channel === 'guild' ? P.chat.guild : P.chat.global).filter((m) => !G.isMuted(m.author));
   list.replaceChildren(...(msgs.length ? msgs.slice(-40).map((m) => h('div', { class: 'msg' + (m.me ? ' me' : '') }, clsBadge(m.cls),
-    h('b', { class: m.me ? '' : 'msg-name', onclick: m.me || !app ? null : (e) => chatMenu(app, m, e.currentTarget) }, m.from, m.online && !m.me ? h('span', { class: 'online-dot' }) : null, ': '),
+    h('b', { class: m.me ? '' : 'msg-name', onclick: m.me || !app ? null : (e) => chatMenu(app, m, e.currentTarget) }, m.from, vipTag(G.isVipId(m.me ? 'me' : m.author)), m.online && !m.me ? h('span', { class: 'online-dot' }) : null, ': '),
     h('span', {}, m.text)))
     : [h('div', { class: 'muted center' }, 'Cisza… napisz coś pierwszy!')]));
   list.scrollTop = list.scrollHeight;

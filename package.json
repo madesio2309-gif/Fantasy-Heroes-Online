@@ -1,13 +1,13 @@
 {
   "name": "fantasy-heroes-online",
   "private": true,
-  "version": "1.8.1",
+  "version": "1.8.2",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node asset_src/online_test.mjs && node asset_src/accounts_test.mjs && node asset_src/update8_test.mjs && node asset_src/schedule_test.mjs && node asset_src/awakening_test.mjs && node asset_src/balance_test.mjs"
+    "test": "node asset_src/online_test.mjs && node asset_src/accounts_test.mjs && node asset_src/update8_test.mjs && node asset_src/schedule_test.mjs && node asset_src/vip_test.mjs && node asset_src/vip_sql_test.mjs && node asset_src/awakening_test.mjs && node asset_src/balance_test.mjs"
   },
   "dependencies": {
     "@fontsource/cinzel": "^5.0.0",
@@ -16,6 +16,7 @@
     "three": "^0.170.0"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.2.17",
     "vite": "^6.0.0"
   }
 }

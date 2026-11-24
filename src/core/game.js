@@ -14,6 +14,7 @@ import {
 import { AWAKENINGS, AWAKEN_LEVELS, TRIALS, TRIAL_ATTEMPTS, TRIAL_PHASES, TRIAL_MAX_ACTIONS, TRIAL_REF_GEAR, TRIAL_BOSS, ROMAN, phaseOf } from '../data/awakening.js';
 import { simulate } from './combat.js';
 import { nextStartOf } from './schedule.js';
+import { VIP } from '../data/vip.js';
 import * as Net from '../net/online.js';
 import { leagueOf, LEAGUES, worldBossInfo } from './world.js';
 
@@ -99,6 +100,8 @@ function migrate8(p) {
   if (!Array.isArray(p.settings.muted)) p.settings.muted = [];
   if (p.stats.mythics === undefined) p.stats.mythics = 0;
   if (p.seenVersion === undefined) p.seenVersion = null;
+  // 1.8.2: VIP (stan z serwera zapamiętany lokalnie; odebrane paczki kryształów)
+  if (!p.vip) p.vip = { until: 0, claimed: [], active: false, keyDay: null };
   return p;
 }
 export function wipe() { localStorage.removeItem(SAVE_KEY); P = null; }
@@ -154,7 +157,8 @@ export function tick(silent = false) {
     P.login.day = dk; P.login.claimed = false;
   }
   if (P.dungeon.keysDay !== dk) { P.dungeon.keys = DUNGEON_KEYS; P.dungeon.keysDay = dk; }
-  if (P.abyss && P.abyss.day !== dk) { P.abyss.keys = ABYSS_KEYS; P.abyss.day = dk; }
+  if (P.abyss && P.abyss.day !== dk) { P.abyss.keys = abyssKeysMax(); P.abyss.day = dk; if (isVip(now)) P.vip.keyDay = dk; }
+  checkVipExpiry(now, silent);
   ensureWheel(now);
   if (P.arena.ticketsDay !== dk) { P.arena.tickets = ARENA_TICKETS + (currentEvent().arena ? 5 : 0); P.arena.ticketsDay = dk; }
   if (!P.challenges || P.challenges.day !== dk) genChallenges(dk);
@@ -259,7 +263,7 @@ export function addItem(it, silentFull = false) {
   if (it.rarity === 4) { P.stats.legendaries++; }
   if (it.rarity >= MYTHIC) { P.stats.mythics = (P.stats.mythics || 0) + 1; }
   // legendarne i mityczne nigdy nie są sprzedawane automatycznie – plecak może się chwilowo przepełnić
-  if (P.bag.length >= BAG_SIZE && it.rarity < 4) {
+  if (P.bag.length >= bagSize() && it.rarity < 4) {
     const g = sellPrice(it); P.gold += g;
     if (!silentFull) toast(`Plecak pełny! „${it.name}” sprzedano za ${fmt(g)} zł.`, 'bad');
     return false;
@@ -279,7 +283,7 @@ export function equip(uid) {
 export function unequip(slot) {
   const it = P.equip[slot];
   if (!it) return;
-  if (P.bag.length >= BAG_SIZE) return toast('Plecak jest pełny.', 'bad');
+  if (P.bag.length >= bagSize()) return toast('Plecak jest pełny.', 'bad');
   P.equip[slot] = null; P.bag.push(it); save(); emit('change'); emit('appearance');
 }
 export function autoEquip() {
@@ -478,10 +482,11 @@ export function idleRates() {
   return { gold: goldBase(L) * 0.3 * m * goldMul(), exp: expNext(L) * questLvlRate(L) * 0.12 * m * expMul(false) };
 }
 export function idlePending() {
-  const ms = Math.min(IDLE_CAP_MS, Date.now() - P.idleT);
+  const cap = idleCapMs();
+  const ms = Math.min(cap, Date.now() - P.idleT);
   const r = idleRates();
   const mins = ms / 60000;
-  return { ms, gold: Math.floor(r.gold * mins), exp: Math.floor(r.exp * mins), full: ms >= IDLE_CAP_MS, item: mins >= 120 };
+  return { ms, cap, gold: Math.floor(r.gold * mins), exp: Math.floor(r.exp * mins), full: ms >= cap, item: mins >= 120 };
 }
 export function claimIdle() {
   const p = idlePending();
@@ -968,7 +973,7 @@ export function shopBuy(uid) {
   const it = P.shop.items[i];
   const price = buyPrice(it);
   if (P.gold < price) return toast('Za mało złota.', 'bad');
-  if (P.bag.length >= BAG_SIZE) return toast('Plecak jest pełny.', 'bad');
+  if (P.bag.length >= bagSize()) return toast('Plecak jest pełny.', 'bad');
   P.gold -= price; P.shop.items.splice(i, 1); P.bag.push(it);
   save(); emit('change'); emit('sfx', 'coin'); toast(`Kupiono: ${it.name}`, 'good');
 }
@@ -981,6 +986,10 @@ export function buyChest() {
 }
 export function buySkin(id) {
   const s = SKINS[id];
+  if (s.src === 'vip') {
+    if (!isVip()) return toast(`Skórka „${s.name}” jest dostępna dla graczy z aktywnym VIP-em.`, 'bad');
+    P.skin = id; save(); emit('change'); emit('appearance'); return;
+  }
   if (P.skinsOwned.includes(id)) { P.skin = id; save(); emit('change'); emit('appearance'); return; }
   if (s.src !== 'shop') return toast('Tę skórkę zdobywa się w grze: ' + s.desc, 'bad');
   if (P.crystals < s.cost) return toast('Za mało kryształów.', 'bad');
@@ -1195,7 +1204,7 @@ export function nextAbyssMilestone(from = P.abyss.floor + 1) {
 export function abyssBattle() {
   if (!abyssUnlocked()) { toast(`Otchłań otwiera się na ${ABYSS_REQ} poziomie.`, 'bad'); return null; }
   if (P.abyss.floor >= ABYSS_FLOORS) { toast('Zdobyłeś wszystkie piętra Otchłani!', 'good'); return null; }
-  if (P.abyss.keys <= 0) { toast(`Brak kluczy Otchłani – jutro dostaniesz ${ABYSS_KEYS} nowych.`, 'bad'); return null; }
+  if (P.abyss.keys <= 0) { toast(`Brak kluczy Otchłani – jutro dostaniesz ${abyssKeysMax()} nowych.`, 'bad'); return null; }
   P.abyss.keys--;
   const f = P.abyss.floor + 1;
   const { s, B } = abyssEnemy(f);
@@ -1384,5 +1393,46 @@ export async function reportMessage(msg, reason) {
   return true;
 }
 export function markVersionSeen(v) { P.seenVersion = v; save(); }
+
+// ——— VIP: nadawany przez administratora; status pochodzi z serwera (tabela vip), lokalnie tylko zapamiętany ———
+export const vipUntil = (t = Date.now()) => (P && P.vip && P.vip.until > t ? P.vip.until : 0);
+export const isVip = (t = Date.now()) => vipUntil(t) > 0;
+export const bagSize = () => BAG_SIZE + (isVip() ? VIP.bag : 0);
+export const idleCapMs = () => (isVip() ? VIP.idleHours : 12) * 3600000;
+export const abyssKeysMax = () => ABYSS_KEYS + (isVip() ? VIP.abyssKeys : 0);
+// korona przy nicku: 'me' – własny status, inaczej status gracza z serwera
+export const isVipId = (id) => (id === 'me' ? isVip() : !!id && Net.vipUntil(id) > 0);
+// po wygaśnięciu: skórka VIP zdejmowana, jednorazowy komunikat
+function checkVipExpiry(t = Date.now(), silent = false) {
+  if (!P || !P.vip) return;
+  const on = isVip(t);
+  if (!on && P.skin === VIP.skin) { P.skin = 'default'; emit('appearance'); }
+  if (P.vip.active && !on) { P.vip.active = false; if (!silent) toast('👑 Twój VIP wygasł. Dziękujemy za wsparcie gry!', 'bad'); }
+}
+// synchronizacja z serwerem: status, +1 klucz Otchłani w dniu nadania, paczki kryształów z nowych nadań (raz na nadanie)
+export function syncVip(t = Date.now()) {
+  if (!P || !Net.Net.uid || Net.Net.vipReady !== true) return null;
+  const was = P.vip.active && isVip(t);
+  P.vip.until = Net.vipUntil(Net.Net.uid, t);
+  const now = isVip(t);
+  let keys = 0;
+  if (now && !was && P.abyss && P.vip.keyDay !== dayKey(t)) { P.abyss.keys += VIP.abyssKeys; P.vip.keyDay = dayKey(t); keys = VIP.abyssKeys; }
+  const born = P.created || 0;
+  const fresh = (Net.Net.myVipLog || []).filter((g) => g.action === 'grant' && g.bonus > 0 && !P.vip.claimed.includes(g.id) && new Date(g.created_at).getTime() >= born);
+  const cr = fresh.reduce((s, g) => s + Math.min(VIP.crystalsMax, Math.max(0, Math.floor(Number(g.bonus) || 0))), 0);
+  P.vip.claimed = [...P.vip.claimed, ...fresh.map((g) => g.id)].slice(-200);
+  if (cr) addCrystals(cr);
+  P.vip.active = now;
+  checkVipExpiry(t);
+  const changed = cr > 0 || keys > 0 || was !== now;
+  if (changed) {
+    if (now && !was) toast(`👑 Masz VIP-a do ${new Date(P.vip.until).toLocaleDateString('pl-PL')}!${cr ? ` Paczka: +${cr} 💎` : ''}`, 'good');
+    else if (was && !now) toast('👑 Twój VIP został zakończony.', 'bad');
+    else if (cr) toast(`👑 VIP przedłużony do ${new Date(P.vip.until).toLocaleDateString('pl-PL')}. Paczka: +${cr} 💎`, 'good');
+    save(); emit('change');
+  }
+  return { was, now, cr, keys };
+}
+Net.onNet((type) => { if (type === 'vip') syncVip(); });
 
 export { calcStats, powerOf, expNext, unlockedSkills, upgradeCost, sellPrice, buyPrice, MAX_UP, BAG_SIZE, goldBase, MAX_LVL, levelCap };

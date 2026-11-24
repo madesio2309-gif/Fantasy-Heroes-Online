@@ -59,6 +59,19 @@ w jednym świecie. Bez serwera gra działa solo: przygody, lochy, Próby Przebud
 
 Na górnym pasku pojawi się zielony wskaźnik **Online**. Testerom wystarczy otworzyć link do gry – logują się automatycznie.
 
+## Aktualizacja 1.8.2 – VIP (jednorazowo)
+
+1. W panelu Supabase otwórz **SQL Editor → New query**.
+2. Wklej całą zawartość pliku `supabase/vip_1.8.2.sql` i kliknij **Run** (wynik: „Success. No rows returned”).
+   Plik można uruchamiać wielokrotnie – niczego nie usuwa i nie zmienia istniejących kont ani postaci.
+3. Odśwież grę i otwórz 🛡 › **Gracze** – zamiast żółtej informacji o brakującej migracji pojawi się sekcja
+   „👑 Aktywni VIP”, a przy graczach przycisk **👑 VIP** (nadanie / przedłużenie / odebranie, 1–366 dni).
+
+Do czasu uruchomienia migracji gra działa normalnie, tylko nadawanie VIP-a jest wyłączone. Status VIP i dziennik nadań
+zmieniają wyłącznie funkcje `admin_grant_vip` / `admin_revoke_vip` (sprawdzają `is_admin()`); gracze mogą je tylko
+odczytać (status – wszyscy zalogowani, dziennik – tylko własny). Paczkę kryształów (10 💎 za dzień, maks. 1000)
+wylicza serwer przy nadaniu, a gra odbiera ją raz na nadanie.
+
 ## Bezpieczeństwo
 
 - Klucz publiczny (*publishable* / *anon*) jest z założenia jawny i może być w repozytorium – dostęp chronią reguły RLS

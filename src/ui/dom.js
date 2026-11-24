@@ -104,6 +104,8 @@ export function clsBadge(cls) {
   const C = CLASSES[cls];
   return h('span', { class: 'clsb', style: { background: '#' + C.color.toString(16).padStart(6, '0') } }, C.name[0]);
 }
+// złota plakietka VIP przy nicku (czat, rankingi, gildia, profil)
+export const vipTag = (on) => (on ? h('span', { class: 'vip-tag', title: 'Gracz VIP' }, 'VIP') : null);
 
 // ——— Miniatura bohatera w danej skórce: ten sam algorytm co shader sceny (odcień stroju, nasycenie, tint), liczony na canvasie ———
 const imgCache = {};

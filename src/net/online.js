@@ -23,6 +23,9 @@ export const Net = {
   boss: { worldTotal: 0, worldOwnServer: 0, guildOthers: 0, contributors: [] },
   live: [], // aktywne i zaplanowane eventy administratora
   news: [], // ogłoszenia
+  vip: {}, // id gracza → koniec VIP-a (ms), tylko aktywni
+  vipReady: null, // true – tabela VIP na serwerze; false – brak migracji supabase/vip_1.8.2.sql; null – nie sprawdzono
+  myVipLog: [], // własne wpisy dziennika VIP (nadania z paczką kryształów)
   channel: null,
   lastProfile: 0,
   lastRefresh: 0,
@@ -166,7 +169,47 @@ export async function refresh(week, guildNetId) {
     Net.boss.guildOthers = gb.filter((r) => r.player_id !== Net.uid).reduce((s, r) => s + Number(r.dmg), 0);
   } else Net.boss.guildOthers = 0;
   await loadPublic();
+  await loadVip();
   emit('refresh');
+}
+
+// ——— VIP (nadawany przez administratora; status i dziennik tylko z serwera) ———
+export const VIP_MIGRATION_FILE = 'supabase/vip_1.8.2.sql';
+const missingRelation = (err) => /PGRST20[25]|does not exist|schema cache/i.test(`${err?.code || ''} ${err?.message || ''}`);
+export async function loadVip() {
+  if (!Net.client) return;
+  const r = await withTimeout(Net.client.from('vip').select('user_id,until').gt('until', new Date().toISOString()).limit(1000), 'VIP');
+  if (r.error && missingRelation(r.error)) {
+    if (Net.vipReady !== false) console.warn(`VIP: na serwerze brakuje tabeli vip – uruchom ${VIP_MIGRATION_FILE} w Supabase › SQL Editor.`);
+    Net.vipReady = false; Net.vip = {}; Net.myVipLog = [];
+    emit('vip');
+    return;
+  }
+  Net.vip = Object.fromEntries(check(r, 'VIP').map((x) => [x.user_id, new Date(x.until).getTime()]));
+  Net.myVipLog = Net.uid ? check(await withTimeout(Net.client.from('vip_log').select('id,action,days,bonus,until,created_at').eq('user_id', Net.uid).order('created_at', { ascending: false }).limit(50), 'Dziennik VIP'), 'Dziennik VIP') : [];
+  Net.vipReady = true;
+  emit('vip');
+}
+// koniec VIP-a gracza (ms) albo 0, gdy nie jest VIP-em
+export function vipUntil(id, t = Date.now()) {
+  const u = Net.vip[id];
+  return u && u > t ? u : 0;
+}
+const VIP_ERRORS = [
+  [/NOT_ADMIN/, 'Brak uprawnień administratora.'],
+  [/VIP_DAYS/, 'Podaj od 1 do 366 dni VIP-a.'],
+  [/VIP_TOO_LONG/, 'VIP może sięgać najwyżej 2 lata naprzód.'],
+  [/VIP_NO_USER/, 'Taki gracz nie istnieje.'],
+  [/VIP_NOT_ACTIVE/, 'Ten gracz nie ma aktywnego VIP-a.'],
+];
+function vipCheck(res, label) {
+  if (res.error) {
+    const msg = `${res.error.code || ''} ${res.error.message || res.error}`;
+    if (missingRelation(res.error) || /PGRST202|function .*admin_(grant|revoke)_vip/i.test(msg)) throw new Error(`Na serwerze brakuje funkcji VIP – uruchom ${VIP_MIGRATION_FILE} w Supabase › SQL Editor.`);
+    const known = VIP_ERRORS.find(([re]) => re.test(msg));
+    throw new Error(known ? known[1] : `${label}: ${res.error.message || res.error}`);
+  }
+  return res.data;
 }
 
 export async function pushBossDamage(kind, scope, week, totalDmg) {
@@ -295,6 +338,29 @@ export const Admin = {
     let req = db().from('players').select('id,name,cls,lvl,power,abyss,updated_at').order('updated_at', { ascending: false }).limit(30);
     if (q && q.trim()) req = req.ilike('name', `%${q.trim().replace(/[%_]/g, '')}%`);
     return check(await withTimeout(req, 'Gracze'), 'Gracze');
+  },
+  // ——— VIP ———
+  async vipList() {
+    await loadVip();
+    if (Net.vipReady === false) return null;
+    const ids = Object.keys(Net.vip);
+    const names = ids.length ? check(await withTimeout(db().from('players').select('id,name,cls,lvl').in('id', ids), 'Gracze VIP'), 'Gracze VIP') : [];
+    const by = Object.fromEntries(names.map((p) => [p.id, p]));
+    return ids.map((id) => ({ id, until: Net.vip[id], name: by[id]?.name || id.slice(0, 8), cls: by[id]?.cls || 'warrior', lvl: by[id]?.lvl || 0 })).sort((a, b) => a.until - b.until);
+  },
+  async grantVip(userId, days, reason = '') {
+    const d = Math.floor(Number(days));
+    if (!(d >= 1 && d <= 366)) throw new Error('Podaj od 1 do 366 dni VIP-a.');
+    const until = vipCheck(await withTimeout(db().rpc('admin_grant_vip', { p_user: userId, p_days: d, p_reason: String(reason || '').trim().slice(0, 120) || null }), 'Nadanie VIP'), 'Nadanie VIP');
+    await loadVip();
+    return new Date(until).getTime();
+  },
+  async revokeVip(userId, reason = '') {
+    vipCheck(await withTimeout(db().rpc('admin_revoke_vip', { p_user: userId, p_reason: String(reason || '').trim().slice(0, 120) || null }), 'Odebranie VIP'), 'Odebranie VIP');
+    await loadVip();
+  },
+  async vipHistory(userId) {
+    return vipCheck(await withTimeout(db().from('vip_log').select('id,action,days,bonus,until,reason,created_at').eq('user_id', userId).order('created_at', { ascending: false }).limit(10), 'Dziennik VIP'), 'Dziennik VIP');
   },
   async guards(ids) {
     if (!ids.length) return [];

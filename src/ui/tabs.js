@@ -1,5 +1,6 @@
 // Pięć głównych zakładek
-import { h, icon, uiIcon, itemSlotEl, itemDetails, bar, btn, heroLook, clsBadge, skinPreview } from './dom.js';
+import { h, icon, uiIcon, itemSlotEl, itemDetails, bar, btn, heroLook, clsBadge, skinPreview, vipTag } from './dom.js';
+import { VIP } from '../data/vip.js';
 import { sfx } from './audio.js';
 import * as G from '../core/game.js';
 import * as Panels from './panels.js';
@@ -239,10 +240,10 @@ function equipView(app) {
     tile('Krytyk', s.crit.toFixed(1) + '%'), tile('Unik', s.dodge.toFixed(1) + '%'), s.block ? tile('Blok', s.block + '%') : tile('Odporność', s.resist.toFixed(0) + '%'));
   const bag = h('div', { class: 'bag', 'data-drop': 'bag' },
     P.bag.map((it) => itemSlotEl(it, { onclick: () => !app.dragBlock && app.showItem(it), delta: G.compare(it), attrs: { 'data-uid': it.uid, 'data-src': 'bag', 'data-slot': it.slot } })),
-    Array.from({ length: Math.max(0, G.BAG_SIZE - P.bag.length) }, () => h('div', { class: 'islot rx empty' })));
+    Array.from({ length: Math.max(0, G.bagSize() - P.bag.length) }, () => h('div', { class: 'islot rx empty' })));
   return h('div', { class: 'eqv' },
     doll, tiles,
-    h('div', { class: 'sec-head' }, h('h4', {}, `Plecak ${P.bag.length}/${G.BAG_SIZE}`),
+    h('div', { class: 'sec-head' }, h('h4', {}, `Plecak ${P.bag.length}/${G.bagSize()}`, G.isVip() ? h('span', { class: 'vip-tag', title: `VIP: +${VIP.bag} miejsc w plecaku` }, `VIP +${VIP.bag}`) : null),
       h('div', { class: 'row gap' }, btn('Załóż najlepsze', () => G.autoEquip(), 'primary small', { id: 'btn-autoequip' }), btn('Sprzedaj zbędne', () => G.sellJunk(), 'ghost small'))),
     bag,
     h('div', { class: 'drop-sell', 'data-drop': 'sell' }, uiIcon('gold', 'ico'), 'Upuść tutaj, aby sprzedać'),
@@ -348,13 +349,14 @@ function lookView(app) {
     h('div', { class: 'swatches' }, AURA_COLORS.map((o, i) => h('button', { class: 'sw' + (P.aura === i ? ' sel' : ''), title: o.name, style: { background: o.c }, onclick: () => G.setAppearance({ aura: i }) }))),
     h('label', { class: 'lbl' }, 'Skórki (kosmetyczne – bez wpływu na siłę)'),
     h('div', { class: 'skins' }, Object.entries(SKINS).map(([id, s]) => {
-      const own = P.skinsOwned.includes(id);
-      return h('div', { class: 'skin' + (P.skin === id ? ' sel' : '') + (own ? '' : ' locked'), 'data-skin': id },
-        h('div', { class: 'skin-pv' }, skinPreview(P.cls, P.look, P.hue, id, 130), own ? null : h('span', { class: 'skin-lock' }, '🔒')),
+      const vipSkin = s.src === 'vip';
+      const own = vipSkin ? G.isVip() : P.skinsOwned.includes(id);
+      return h('div', { class: 'skin' + (P.skin === id ? ' sel' : '') + (own ? '' : ' locked') + (vipSkin ? ' vip' : ''), 'data-skin': id },
+        h('div', { class: 'skin-pv' }, skinPreview(P.cls, P.look, P.hue, id, 130), own ? null : h('span', { class: 'skin-lock' }, '🔒'), vipSkin ? h('span', { class: 'vip-tag skin-vip' }, 'VIP') : null),
         h('b', {}, s.name), h('div', { class: 'muted' }, s.desc),
         h('div', { class: 'row gap wrap' },
           own ? btn(P.skin === id ? 'Założona' : 'Załóż', () => G.buySkin(id), 'small', { disabled: P.skin === id || undefined })
-            : s.src === 'shop' ? btn(`${s.cost} 💎`, () => G.buySkin(id), 'gold small') : h('span', { class: 'lock' }, '🔒 Do zdobycia'),
+            : s.src === 'shop' ? btn(`${s.cost} 💎`, () => G.buySkin(id), 'gold small') : h('span', { class: 'lock' }, vipSkin ? '🔒 Tylko dla VIP' : '🔒 Do zdobycia'),
           P.skin !== id ? btn('👁 Przymierz', () => app.trySkin(id), 'ghost small', { title: 'Podgląd na scenie przez kilka sekund', 'data-try': id }) : null));
     })),
     h('label', { class: 'lbl' }, 'Ewolucja wyglądu wraz z poziomem'),
@@ -392,7 +394,7 @@ function abyssView(app) {
         unlocked ? foe : h('div', { class: 'muted' }, `Otchłań otwiera się na ${G.ABYSS_REQ} poziomie. Brakuje Ci ${G.ABYSS_REQ - P.lvl} poz.`),
         unlocked ? h('div', { class: 'row gap wrap' },
           done ? h('span', { class: 'done-tag' }, '✔ Otchłań zdobyta!') : btn(`⚔ Walcz (🌀${A.keys})`, () => app.fight(() => G.abyssBattle()), 'primary', { disabled: A.keys <= 0 || undefined, id: 'btn-abyss' }),
-          h('span', { class: 'muted' }, `Klucze Otchłani: ${A.keys}/${G.ABYSS_KEYS} (odnowa o północy)`)) : null)),
+          h('span', { class: 'muted' }, `Klucze Otchłani: ${A.keys}/${G.abyssKeysMax()}${G.isVip() ? ` (w tym +${VIP.abyssKeys} VIP)` : ''} (odnowa o północy)`)) : null)),
     ms ? h('div', { class: 'abyss-ms' }, uiIcon('legendChest', 'ico'), h('div', {}, h('b', {}, `Nagroda na piętrze ${ms.floor}: `), ms.rewards.join(' · '))) : null,
     h('div', { class: 'sec-head' }, h('h4', {}, 'Kamienie milowe')),
     h('div', { class: 'abyss-list' },
@@ -567,7 +569,7 @@ function guild(app) {
     body = h('div', {},
       h('div', { class: 'pts-box' }, h('div', {}, 'Poziom gildii: ', h('b', {}, glvl), h('span', { class: 'muted' }, ` · Bonus: +${G.guildBonus()}% złota i EXP`)),
         h('div', {}, `${roster.length}/${G.GUILD_MAX} członków`)),
-      h('div', { class: 'lb' }, roster.map((m, i) => h('div', { class: 'lb-row click' + (m.me ? ' me' : ''), title: 'Pokaż profil i ekwipunek', onclick: () => openProfile(app, m.me ? 'me' : m.id) }, h('span', { class: 'lb-pos' }, i + 1), clsBadge(m.cls), h('span', { class: 'lb-name' }, m.name, i === 0 ? ' 👑' : '', m.online ? onlineDot() : null), h('span', { class: 'muted' }, `poz. ${m.lvl}`), h('b', {}, fmt(m.power))))),
+      h('div', { class: 'lb' }, roster.map((m, i) => h('div', { class: 'lb-row click' + (m.me ? ' me' : ''), title: 'Pokaż profil i ekwipunek', onclick: () => openProfile(app, m.me ? 'me' : m.id) }, h('span', { class: 'lb-pos' }, i + 1), clsBadge(m.cls), h('span', { class: 'lb-name' }, m.name, vipTag(G.isVipId(m.me ? 'me' : m.id)), i === 0 ? ' 👑' : '', m.online ? onlineDot() : null), h('span', { class: 'muted' }, `poz. ${m.lvl}`), h('b', {}, fmt(m.power))))),
       h('div', { class: 'row center' }, btn('Opuść gildię', () => { if (confirm('Na pewno opuścić gildię?')) G.leaveGuild(); }, 'ghost small')));
   } else if (st.cur === 'boss') {
     const gi = G.guildBossInfo();

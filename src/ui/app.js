@@ -526,6 +526,7 @@ export class App {
           '⚡ ', ev.short, h('small', {}, ' ' + fmtTime(new Date(e.ends_at).getTime() - Date.now())));
       })) : null,
       h('div', { class: 'tb-res' },
+        G.isVip() ? h('button', { class: 'res set vipb', id: 'btn-vip', title: `VIP do ${new Date(G.vipUntil()).toLocaleString('pl-PL')}`, onclick: () => Panels.openVipInfo(this) }, '👑 VIP') : null,
         h('div', { class: 'res', title: 'Siła postaci' }, uiIcon('swords', 'ico'), h('b', {}, fmt(G.power()))),
         h('div', { class: 'res', title: 'Złoto' }, uiIcon('gold', 'ico'), h('b', {}, fmt(P.gold))),
         h('div', { class: 'res', title: 'Kryształy (darmowa waluta premium – zdobywana w grze)', onclick: () => Panels.openShop(this, 'crystal') }, uiIcon('crystal', 'ico'), h('b', {}, fmt(P.crystals))),

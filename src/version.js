@@ -1,6 +1,14 @@
 // Wersja gry i lista zmian (okno „Co nowego” po aktualizacji)
-export const APP_VERSION = '1.8.1';
+export const APP_VERSION = '1.8.2';
 export const CHANGELOG = [
+  {
+    v: '1.8.2', date: '2026-11-25', title: 'VIP',
+    items: [
+      'VIP przyznawany przez administrację (np. za konkursy na Discordzie): plecak +10, Idle do 16 godz., +1 klucz Otchłani dziennie.',
+      'Złota plakietka VIP przy nicku, skórka „Królewski VIP” i paczka kryształów przy każdym nadaniu. VIP nie daje przewagi w walce.',
+      'Szczegóły i czas trwania: 👑 VIP na górnym pasku lub Sklep › Kryształy i skórki.',
+    ],
+  },
   {
     v: '1.8.1', date: '2026-11-25', title: 'Zapowiedzi eventów',
     items: [

@@ -1,5 +1,5 @@
 // Profil gracza: podgląd ekwipunku, statystyk, peta i skórki innego gracza (dane z serwera, oczyszczane przy odczycie)
-import { h, uiIcon, itemSlotEl, itemDetails, btn, skinPreview, clsBadge, fill } from './dom.js';
+import { h, uiIcon, itemSlotEl, itemDetails, btn, skinPreview, clsBadge, fill, vipTag } from './dom.js';
 import * as G from '../core/game.js';
 import { CLASSES } from '../data/classes.js';
 import { SLOT_NAMES } from '../data/items.js';
@@ -65,7 +65,7 @@ export async function openProfile(app, id) {
   fill(body, 
     h('div', { class: 'pv-head' },
       clsBadge(row.cls),
-      h('div', {}, h('h3', {}, row.name), h('div', { class: 'muted' }, `${C.name} · poziom ${row.lvl}${guild ? ' · ' + guild : ''}`)),
+      h('div', {}, h('h3', {}, row.name, vipTag(G.isVipId(id === 'me' ? 'me' : row.id))), h('div', { class: 'muted' }, `${C.name} · poziom ${row.lvl}${guild ? ' · ' + guild : ''}`)),
       h('div', { class: 'pv-tags' },
         h('span', { class: 'league small', style: { background: lg.color } }, lg.name),
         h('span', { class: 'pv-tag' }, '🏆 ', fmt(Number(row.rating) || 1000)),
