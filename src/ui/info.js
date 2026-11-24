@@ -3,7 +3,7 @@ import { h, btn, fill } from './dom.js';
 import { TERMS, PRIVACY, LEGAL_VERSION } from '../data/legal.js';
 import { APP_VERSION, CHANGELOG } from '../version.js';
 import { LIVE_EVENTS } from '../data/live.js';
-import { fmtTime } from '../core/util.js';
+import { splitLive, upcomingLive, evStart, evEnd, fmtIn, fmtRange } from '../core/schedule.js';
 
 export function openDocs(app, which = 'terms') {
   let cur = which;
@@ -34,10 +34,17 @@ export function openChangelog(app, onClose) {
 // lista ogłoszeń i aktywnych eventów (ekran startowy, panel w grze)
 export function newsView(news, live, opts = {}) {
   const now = Date.now();
-  const act = (live || []).filter((e) => new Date(e.starts_at).getTime() <= now && now < new Date(e.ends_at).getTime());
-  if (!act.length && !(news || []).length) return null;
+  const { active: act } = splitLive(live, now);
+  const soon = upcomingLive(live, now).slice(0, opts.compact ? 3 : 6);
+  if (!act.length && !soon.length && !(news || []).length) return null;
   return h('div', { class: 'news' + (opts.compact ? ' compact' : '') },
-    act.map((e) => { const ev = LIVE_EVENTS[e.kind]; return h('div', { class: 'news-ev', style: { background: ev.color } }, h('b', {}, '⚡ ', ev.name), ` – ${ev.short} · jeszcze ${fmtTime(new Date(e.ends_at).getTime() - now)}`); }),
+    act.map((e) => { const ev = LIVE_EVENTS[e.kind]; return h('div', { class: 'news-ev', style: { background: ev.color } }, h('b', {}, '⚡ ', ev.name), ` – ${ev.short} · jeszcze ${fmtIn(evEnd(e) - now)}`); }),
+    soon.map((e) => {
+      const ev = LIVE_EVENTS[e.kind];
+      return h('div', { class: 'news-soon', style: { '--ec': ev.color }, 'data-soon': e.kind },
+        h('div', { class: 'news-soon-h' }, h('span', { class: 'news-soon-tag' }, '📅 Zapowiedź'), h('b', {}, ev.name), h('span', { class: 'news-soon-in' }, `za ${fmtIn(evStart(e) - now)}`)),
+        h('div', {}, `${ev.short} · ${fmtRange(evStart(e), evEnd(e))}`));
+    }),
     (news || []).slice(0, opts.compact ? 2 : 5).map((n) => h('div', { class: 'news-item' },
       h('b', {}, '📢 ', n.title), h('div', { class: 'news-body' }, n.body), h('div', { class: 'muted' }, new Date(n.created_at).toLocaleDateString('pl-PL')))));
 }

@@ -13,6 +13,7 @@ import {
 } from './formulas.js';
 import { AWAKENINGS, AWAKEN_LEVELS, TRIALS, TRIAL_ATTEMPTS, TRIAL_PHASES, TRIAL_MAX_ACTIONS, TRIAL_REF_GEAR, TRIAL_BOSS, ROMAN, phaseOf } from '../data/awakening.js';
 import { simulate } from './combat.js';
+import { nextStartOf } from './schedule.js';
 import * as Net from '../net/online.js';
 import { leagueOf, LEAGUES, worldBossInfo } from './world.js';
 
@@ -1299,12 +1300,13 @@ function ensureWheel(t = Date.now()) {
   return P.wheel;
 }
 export const wheelFreeTokens = () => (liveActive('wheel') ? 5 : 3);
-// czas do otwarcia koła (najbliższa sobota 00:00) i do jego zamknięcia (poniedziałek 00:00 lub koniec eventu)
+// czas do otwarcia koła (najbliższa sobota 00:00 albo wcześniejszy zaplanowany event „Szczęśliwe Koło”) i do jego zamknięcia
 export function wheelOpensIn(t = Date.now()) {
   const d = new Date(t);
   const add = ((6 - d.getDay() + 7) % 7) || 7;
   d.setDate(d.getDate() + add); d.setHours(0, 0, 0, 0);
-  return d.getTime() - t;
+  const ev = nextStartOf(Net.Net.live, 'wheel', t);
+  return Math.min(d.getTime(), ev ?? Infinity) - t;
 }
 export function wheelClosesIn(t = Date.now()) {
   if (isWeekend(t)) { const d = new Date(t); d.setDate(d.getDate() + (d.getDay() === 6 ? 2 : 1)); d.setHours(0, 0, 0, 0); return d.getTime() - t; }

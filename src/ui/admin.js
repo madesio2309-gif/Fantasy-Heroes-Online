@@ -1,8 +1,9 @@
 // Panel administratora – widoczny tylko dla konta administratora; każdą operację i tak weryfikuje serwer (is_admin()).
 import { h, btn, clsBadge, uiIcon, fill } from './dom.js';
 import * as G from '../core/game.js';
-import { LIVE_EVENTS, LIVE_DURATIONS } from '../data/live.js';
-import { fmt, fmtTime } from '../core/util.js';
+import { LIVE_EVENTS } from '../data/live.js';
+import { fmt } from '../core/util.js';
+import { splitLive, liveStatus, evStart, evEnd, validateSchedule, presetRange, toLocalInput, fromLocalInput, fmtRange, fmtWhen, fmtIn, fmtDuration, timeZoneLabel, ANNOUNCE_DAYS } from '../core/schedule.js';
 import { openProfile } from './profile.js';
 
 const A = () => G.Net.Admin;
@@ -30,26 +31,106 @@ export function openAdmin(app) {
     } catch (e) { fail(e); }
   }
 
+  // ——— Eventy: planowanie (data i godzina od–do), lista trwających i zaplanowanych, edycja, anulowanie ———
+  let editing = null; // id edytowanego eventu
   async function drawEvents() {
     const list = await A().events();
-    const now = Date.now();
-    const active = list.filter((e) => new Date(e.starts_at).getTime() <= now && now < new Date(e.ends_at).getTime());
-    fill(content, 
-      h('div', { class: 'tip' }, 'Event zaczyna się od razu i działa u wszystkich graczy online (odświeżenie do 1 minuty). Można go zatrzymać w dowolnej chwili.'),
-      h('div', { class: 'admin-events' }, Object.entries(LIVE_EVENTS).map(([kind, ev]) => {
-        const on = active.find((e) => e.kind === kind);
-        const sel = h('select', { class: 'inp small', 'data-ev': kind }, LIVE_DURATIONS.map((hh) => h('option', { value: hh, selected: hh === 24 || undefined }, `${hh} h`)));
-        return h('div', { class: 'admin-ev' + (on ? ' on' : ''), style: { borderColor: ev.color } },
-          h('div', { class: 'admin-ev-h', style: { background: ev.color } }, uiIcon(ev.icon, 'ico'), h('b', {}, ev.name), h('span', {}, ev.short)),
-          h('div', { class: 'muted' }, ev.desc),
-          on ? h('div', {}, h('b', {}, '● Trwa'), ` – kończy się za ${fmtTime(new Date(on.ends_at).getTime() - now)}`) : h('div', { class: 'muted' }, 'Nieaktywny'),
-          h('div', { class: 'row gap wrap' },
-            on ? btn('Zatrzymaj', run(() => A().stopEvent(on.id), `Zatrzymano: ${ev.name}`), 'ghost small')
-              : [sel, btn('Uruchom', run(() => A().startEvent(kind, Number(sel.value)), `Uruchomiono: ${ev.name}`), 'primary small', { 'data-start': kind })]));
-      })),
+    const t = Date.now();
+    const { active, upcoming, ended } = splitLive(list, t);
+    const cur = editing != null ? list.find((e) => e.id === editing && liveStatus(e, t) !== 'ended') : null;
+    if (!cur) editing = null;
+    fill(content,
+      h('div', { class: 'sec-head' }, h('h4', {}, cur ? `Edycja: ${LIVE_EVENTS[cur.kind].name}` : 'Zaplanuj event')),
+      scheduleForm(list, cur),
+      h('div', { class: 'sec-head' }, h('h4', {}, `Trwające (${active.length})`)),
+      active.length ? h('div', { class: 'ev-list' }, active.map((e) => evRow(e, 'active', t))) : h('div', { class: 'muted' }, 'Teraz nie trwa żaden event.'),
+      h('div', { class: 'sec-head' }, h('h4', {}, `Zaplanowane (${upcoming.length})`)),
+      upcoming.length ? h('div', { class: 'ev-list' }, upcoming.map((e) => evRow(e, 'upcoming', t))) : h('div', { class: 'muted' }, 'Brak zaplanowanych eventów.'),
       h('div', { class: 'sec-head' }, h('h4', {}, 'Historia')),
-      h('div', { class: 'lb small' }, list.length ? list.slice(0, 12).map((e) => h('div', { class: 'lb-row' },
-        h('span', { class: 'lb-name' }, LIVE_EVENTS[e.kind]?.name || e.kind), h('span', { class: 'muted' }, `${when(e.starts_at)} → ${when(e.ends_at)}`))) : h('div', { class: 'muted center' }, 'Brak eventów.')));
+      h('div', { class: 'lb small' }, ended.length ? ended.slice(0, 10).map((e) => h('div', { class: 'lb-row' },
+        h('span', { class: 'lb-name' }, LIVE_EVENTS[e.kind].name), h('span', { class: 'muted' }, fmtRange(evStart(e), evEnd(e))))) : h('div', { class: 'muted center' }, 'Brak zakończonych eventów.')),
+      h('div', { class: 'tip' }, `🕑 Godziny w czasie Twojego urządzenia (${timeZoneLabel()}). Event włącza się i wyłącza sam o ustalonej godzinie u wszystkich graczy – nie trzeba mieć otwartego panelu. Zaplanowane eventy widać na ekranie startowym jako zapowiedź (do ${ANNOUNCE_DAYS} dni wcześniej).`));
+  }
+  function scheduleForm(list, cur) {
+    const activeEdit = !!cur && liveStatus(cur) === 'active';
+    let kind = cur ? cur.kind : 'xp2';
+    const def = presetRange('evening');
+    const startInp = h('input', { type: 'datetime-local', class: 'inp', id: 'ev-start', value: toLocalInput(cur ? evStart(cur) : def.start), disabled: activeEdit || undefined, oninput: () => update(), onchange: () => update() });
+    const endInp = h('input', { type: 'datetime-local', class: 'inp', id: 'ev-end', value: toLocalInput(cur ? evEnd(cur) : def.end), oninput: () => update(), onchange: () => update() });
+    const kinds = h('div', { class: 'ev-kinds' }, Object.entries(LIVE_EVENTS).map(([k, ev]) => h('button', {
+      type: 'button', class: 'ev-kind' + (k === kind ? ' sel' : ''), 'data-kind': k, style: { '--ec': ev.color }, disabled: activeEdit || undefined, title: ev.desc,
+      onclick: () => { kind = k; kinds.querySelectorAll('.ev-kind').forEach((b) => b.classList.toggle('sel', b.dataset.kind === k)); update(); },
+    }, uiIcon(ev.icon, 'ico'), h('span', {}, h('b', {}, ev.name), h('small', {}, ev.short)))));
+    const presets = activeEdit ? null : h('div', { class: 'ev-presets' }, h('span', { class: 'muted' }, 'Szybko:'),
+      [['now1', 'Teraz · 1 godz.'], ['now24', 'Teraz · 24 godz.'], ['evening', 'Wieczór 18:00–22:00'], ['weekend', 'Najbliższy weekend']].map(([id, label]) => h('button', {
+        type: 'button', class: 'chip small', 'data-preset': id,
+        onclick: () => { const r = presetRange(id); startInp.value = toLocalInput(r.start); endInp.value = toLocalInput(r.end); update(); },
+      }, label)));
+    const info = h('div', { class: 'ev-info', id: 'ev-info', role: 'status' });
+    const vals = () => ({ kind, start: activeEdit ? evStart(cur) : fromLocalInput(startInp.value), end: fromLocalInput(endInp.value) });
+    const submit = btn(cur ? 'Zapisz zmiany' : 'Zaplanuj event', async () => {
+      const v = vals();
+      submit.disabled = true;
+      try {
+        if (cur) await A().updateEvent(cur.id, v); else await A().scheduleEvent(v.kind, v.start, v.end);
+        app.toast(cur ? 'Zapisano nowy termin eventu.' : v.start <= Date.now() ? `Uruchomiono: ${LIVE_EVENTS[v.kind].name}` : `Zaplanowano: ${LIVE_EVENTS[v.kind].name} – ${fmtWhen(v.start)}`, 'good');
+        editing = null;
+        draw();
+      } catch (e) { app.toast(e.message, 'bad'); update(); }
+    }, 'primary', { id: 'ev-submit', type: 'button' });
+    function update() {
+      const v = vals();
+      const t = Date.now();
+      // uwaga: nie zmieniamy tu atrybutu min pól – Chrome gubi wtedy wpisywaną z klawiatury część daty
+      const err = validateSchedule(v, list, t, { ignoreId: cur ? cur.id : null, keepStart: activeEdit });
+      if (err) { info.className = 'ev-info bad'; info.textContent = err; submit.disabled = true; return; }
+      const now = v.start <= t;
+      info.className = 'ev-info ok';
+      info.textContent = `${LIVE_EVENTS[v.kind].name}: ${fmtRange(v.start, v.end)} · czas trwania ${fmtDuration(v.end - v.start)} · ${activeEdit ? 'trwa – zmieniasz godzinę końca' : now ? 'wystartuje od razu' : 'start za ' + fmtIn(v.start - t)}`;
+      submit.disabled = false;
+      submit.textContent = cur ? 'Zapisz zmiany' : now ? 'Uruchom teraz' : 'Zaplanuj event';
+    }
+    const nowMin = toLocalInput(Date.now());
+    if (!activeEdit) startInp.min = nowMin;
+    endInp.min = nowMin;
+    update();
+    return h('div', { class: 'ev-form' + (cur ? ' editing' : ''), id: 'ev-form' },
+      kinds,
+      h('div', { class: 'ev-dates' },
+        h('label', { class: 'lbl', for: 'ev-start' }, 'Start (data i godzina)'), startInp,
+        h('label', { class: 'lbl', for: 'ev-end' }, 'Koniec (data i godzina)'), endInp),
+      presets, info,
+      h('div', { class: 'row gap wrap' }, submit, cur ? btn('Anuluj edycję', () => { editing = null; draw(); }, 'ghost small', { type: 'button', id: 'ev-edit-cancel' }) : null));
+  }
+  function evRow(e, st, t) {
+    const ev = LIVE_EVENTS[e.kind];
+    const s = evStart(e), en = evEnd(e);
+    let armed = null;
+    const label = st === 'active' ? 'Zatrzymaj' : 'Anuluj';
+    const cancel = btn(label, async () => {
+      if (!armed) { // dwuetapowe potwierdzenie bez okna przeglądarki
+        cancel.textContent = st === 'active' ? 'Na pewno zatrzymać?' : 'Na pewno anulować?';
+        cancel.classList.add('primary');
+        armed = setTimeout(() => { armed = null; cancel.textContent = label; cancel.classList.remove('primary'); }, 4000);
+        return;
+      }
+      clearTimeout(armed); armed = null;
+      cancel.disabled = true;
+      try {
+        await A().cancelEvent(e.id);
+        if (editing === e.id) editing = null;
+        app.toast(st === 'active' ? `Zatrzymano: ${ev.name}` : `Anulowano: ${ev.name} (${fmtWhen(s)})`, 'good');
+        draw();
+      } catch (err) { app.toast(err.message, 'bad'); cancel.disabled = false; cancel.textContent = label; cancel.classList.remove('primary'); }
+    }, 'ghost small', { 'data-cancel': e.id, type: 'button' });
+    return h('div', { class: 'ev-row ' + st + (editing === e.id ? ' editing' : ''), 'data-ev-id': e.id, style: { '--ec': ev.color } },
+      h('div', { class: 'ev-row-ico' }, uiIcon(ev.icon, 'ico')),
+      h('div', { class: 'ev-row-in' },
+        h('b', {}, ev.name), h('div', {}, fmtRange(s, en)),
+        h('div', { class: 'ev-when' }, st === 'active' ? `● Trwa – jeszcze ${fmtIn(en - t)}` : `Start za ${fmtIn(s - t)} · ${fmtDuration(en - s)}`)),
+      h('div', { class: 'ev-row-act' },
+        btn('Edytuj', () => { editing = e.id; draw(); content.scrollIntoView({ block: 'start' }); }, 'ghost small', { 'data-edit': e.id, type: 'button' }),
+        cancel));
   }
 
   async function drawNews() {

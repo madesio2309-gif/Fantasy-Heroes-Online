@@ -128,12 +128,22 @@ export class App {
     const flash = sessionStorage.getItem('fho_flash');
     if (flash) { sessionStorage.removeItem('fho_flash'); this.toast(flash, 'good'); }
     // ogłoszenia i eventy widoczne także przed zalogowaniem
-    if (G.Net.getConfig()) G.Net.loadPublic().then(() => this.renderStartNews()).catch((e) => console.error('Ogłoszenia', e));
+    if (G.Net.getConfig()) {
+      const load = () => G.Net.loadPublic().then(() => this.renderStartNews()).catch((e) => console.error('Ogłoszenia', e));
+      load();
+      // odliczanie zapowiedzi co 30 s (zaplanowany event sam przechodzi w „trwa”), świeże dane z serwera co 5 min
+      clearInterval(this.startNewsIv);
+      let ticks = 0;
+      this.startNewsIv = setInterval(() => {
+        if (!this.startEl || !this.startEl.isConnected) { clearInterval(this.startNewsIv); return; }
+        if (++ticks % 10 === 0) load(); else this.renderStartNews();
+      }, 30000);
+    }
   }
   renderStartNews() {
     const box = this.startEl && this.startEl.querySelector('#start-news');
     if (!box) return;
-    box.replaceChildren(newsView(G.Net.Net.news, G.Net.Net.live, { compact: true }) || '');
+    fill(box, newsView(G.Net.Net.news, G.Net.Net.live, { compact: true }));
   }
   // ——— Konto gracza na ekranie startowym ———
   renderStartActions() {

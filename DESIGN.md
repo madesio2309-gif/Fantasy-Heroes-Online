@@ -130,6 +130,15 @@ Decyzje użytkownika: pety = **tylko bonusy pasywne** (widoczne przy bohaterze),
 - Serwer: zapis eventów/ogłoszeń i statystyki admina bez uprawnień → 401; publiczny odczyt eventów/ogłoszeń działa.
 - Poprawki z walidacji: helper `fill()` (natywne `replaceChildren` wypisywało „null”), widoczny przycisk Sklep na ciemnym pasku, znaczniki eventów bez zawijania paska, ikona głośności.
 
+## Aktualizacja 8.1 – planowanie eventów (wersja 1.8.1)
+- Asset Preparation: brak nowych zasobów – ikony eventów (`icons/ui_*`: star/gold/token), kolory z `LIVE_EVENTS` i styl kart panelu ponownie użyte.
+- Panel 🛡 › Eventy: formularz „Zaplanuj event” (rodzaj, start i koniec jako data + godzina, szybkie terminy: teraz 1 h / 24 h, wieczór 18–22, najbliższy weekend), podgląd terminu i błędów na żywo, listy Trwające / Zaplanowane / Historia, edycja (zaplanowany: rodzaj, start, koniec; trwający: tylko koniec), anulowanie z dwuetapowym potwierdzeniem (zaplanowany – usunięcie, trwający – zakończenie teraz).
+- Zasady terminu (`src/core/schedule.js`): 15 min – 7 dni, start nie w przeszłości (tolerancja 5 min), najwyżej 90 dni naprzód, eventy tego samego rodzaju nie mogą się nakładać (różne – mogą). Godziny w czasie urządzenia administratora (opis strefy w panelu).
+- Serwer bez zmian schematu: `live_events` już przechowuje `starts_at`/`ends_at`, zapis tylko dla `is_admin()`. Event włącza się i wyłącza sam u graczy (status liczony z zegara względem pobranych terminów).
+- Gracze: zapowiedzi na ekranie startowym (do 14 dni wcześniej, maks. 3, odliczanie co 30 s, odświeżanie z serwera co 5 min); przy zapowiedziach chowa się hasło i pasek „Gotowe!”, lista przewija się nad pasem zasad. Okno koła fortuny odlicza do zaplanowanego „Szczęśliwego Koła”, jeśli jest przed weekendem.
+- UI fingerprint: kontynuacja papierowych kart – kafle rodzajów z kolorowym paskiem (wybrany = pełny kolor eventu), wiersze listy z lewym paskiem w kolorze eventu, karta zapowiedzi z czarną etykietą „📅 Zapowiedź” i czerwonym odliczaniem.
+- Weryfikacja: `schedule_test` (ponad 50 sprawdzeń, także atrapa serwera dla planowania/edycji/anulowania) + pełne `npm test`; przeglądarka `.preview/run-009`: zapowiedzi na starcie, wpisanie daty z klawiatury, zapis, kolizja, edycja, „Uruchom teraz” (znacznik na pasku, koło aktywne), zatrzymanie, anulowanie. Naprawione przy walidacji: zmiana `min` pola w trakcie wpisywania gubiła datę (Chrome), odliczanie „59,5 min” pokazywało „1 min”, lata 0–99 zamieniane na 19xx.
+
 ## Kryteria ukończenia
 - Kreator postaci (5 klas, wygląd, kolor stroju, aura), hub z animowaną postacią.
 - Walka auto 1v1 10–20 s z animacją, kryty, uniki, umiejętności, przycisk „Pomiń”, porównanie siły.

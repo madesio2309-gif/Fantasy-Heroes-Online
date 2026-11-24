@@ -1,6 +1,13 @@
 // Wersja gry i lista zmian (okno „Co nowego” po aktualizacji)
-export const APP_VERSION = '1.8.0';
+export const APP_VERSION = '1.8.1';
 export const CHANGELOG = [
+  {
+    v: '1.8.1', date: '2026-11-25', title: 'Zapowiedzi eventów',
+    items: [
+      'Eventy od twórców mają teraz stałe terminy – na ekranie startowym zobaczysz zapowiedź z datą, godziną i odliczaniem.',
+      'Zaplanowane „Szczęśliwe Koło” jest uwzględniane w odliczaniu w oknie koła fortuny.',
+    ],
+  },
   {
     v: '1.8.0', date: '2026-11-24', title: 'Aktualizacja z beta testów',
     items: [

@@ -6,6 +6,7 @@ import { cleanText } from '../data/moderation.js';
 import { RARITIES, SLOTS, TEMPLATE_BY_ID } from '../data/items.js';
 import { PET_BY_ID, PET_MAX_LVL } from '../data/pets.js';
 import { LIVE_EVENTS } from '../data/live.js';
+import { validateSchedule, liveStatus, evStart } from '../core/schedule.js';
 
 const CFG_KEY = 'fho_online_cfg';
 const TIMEOUT_MS = 12000;
@@ -125,7 +126,7 @@ export async function loadPublic(cfg = getConfig()) {
   const c = Net.client || (await getClient(cfg));
   const now = new Date().toISOString();
   const [ev, an] = await Promise.all([
-    withTimeout(c.from('live_events').select('id,kind,starts_at,ends_at').gt('ends_at', now).order('starts_at').limit(20), 'Eventy'),
+    withTimeout(c.from('live_events').select('id,kind,starts_at,ends_at').gt('ends_at', now).order('starts_at').limit(50), 'Eventy'),
     withTimeout(c.from('announcements').select('id,title,body,created_at').eq('active', true).order('created_at', { ascending: false }).limit(5), 'Ogłoszenia'),
   ]);
   Net.live = check(ev, 'Eventy').filter((e) => LIVE_EVENTS[e.kind]);
@@ -227,18 +228,51 @@ const db = () => { if (!Net.client) throw new Error('Brak połączenia z serwere
 export const Admin = {
   async isAdmin() { return !!check(await withTimeout(db().rpc('is_admin'), 'Uprawnienia'), 'Uprawnienia'); },
   async stats() { return check(await withTimeout(db().rpc('admin_stats'), 'Statystyki'), 'Statystyki'); },
-  async events() { return check(await withTimeout(db().from('live_events').select('id,kind,starts_at,ends_at,created_at').order('starts_at', { ascending: false }).limit(30), 'Eventy'), 'Eventy'); },
+  // trwające i zaplanowane (wszystkie) + ostatnie zakończone
+  async events() {
+    const now = new Date().toISOString();
+    const [cur, past] = await Promise.all([
+      withTimeout(db().from('live_events').select('id,kind,starts_at,ends_at,created_at').gt('ends_at', now).order('starts_at', { ascending: true }).limit(200), 'Eventy'),
+      withTimeout(db().from('live_events').select('id,kind,starts_at,ends_at,created_at').lte('ends_at', now).order('ends_at', { ascending: false }).limit(15), 'Eventy'),
+    ]);
+    return [...check(cur, 'Eventy'), ...check(past, 'Eventy')];
+  },
+  // nowy event od teraz (hours) – skrót dla „Uruchom teraz”
   async startEvent(kind, hours) {
-    if (!LIVE_EVENTS[kind]) throw new Error('Nieznany event');
-    const now = new Date();
-    const row = { kind, starts_at: now.toISOString(), ends_at: new Date(now.getTime() + hours * 3600000).toISOString() };
-    check(await withTimeout(db().from('live_events').insert(row), 'Start eventu'), 'Start eventu');
+    const t = Math.floor(Date.now() / 60000) * 60000;
+    return this.scheduleEvent(kind, t, t + hours * 3600000);
+  },
+  // nowy event w terminie start–end (ms); termin sprawdzany względem już zaplanowanych
+  async scheduleEvent(kind, start, end) {
+    const err = validateSchedule({ kind, start, end }, await this.events());
+    if (err) throw new Error(err);
+    const row = { kind, starts_at: new Date(start).toISOString(), ends_at: new Date(end).toISOString() };
+    check(await withTimeout(db().from('live_events').insert(row), 'Zaplanowanie eventu'), 'Zaplanowanie eventu');
     await loadPublic();
   },
-  async stopEvent(id) {
-    check(await withTimeout(db().from('live_events').update({ ends_at: new Date().toISOString() }).eq('id', id), 'Zatrzymanie eventu'), 'Zatrzymanie eventu');
+  // zmiana terminu: zaplanowany – rodzaj, start i koniec; trwający – tylko koniec
+  async updateEvent(id, { kind, start, end }) {
+    const list = await this.events();
+    const cur = list.find((e) => e.id === id);
+    if (!cur) throw new Error('Nie znaleziono eventu – mógł zostać usunięty.');
+    const st = liveStatus(cur);
+    if (st === 'ended') throw new Error('Ten event już się zakończył.');
+    const next = st === 'active' ? { kind: cur.kind, start: evStart(cur), end } : { kind, start, end };
+    const err = validateSchedule(next, list, Date.now(), { ignoreId: id, keepStart: st === 'active' });
+    if (err) throw new Error(err);
+    const patch = st === 'active' ? { ends_at: new Date(end).toISOString() } : { kind: next.kind, starts_at: new Date(start).toISOString(), ends_at: new Date(end).toISOString() };
+    check(await withTimeout(db().from('live_events').update(patch).eq('id', id), 'Zmiana eventu'), 'Zmiana eventu');
     await loadPublic();
   },
+  // anulowanie: zaplanowany – usuwany; trwający – kończy się teraz
+  async cancelEvent(id) {
+    const cur = (await this.events()).find((e) => e.id === id);
+    if (!cur) throw new Error('Nie znaleziono eventu – mógł zostać już anulowany.');
+    if (liveStatus(cur) === 'upcoming') check(await withTimeout(db().from('live_events').delete().eq('id', id), 'Anulowanie eventu'), 'Anulowanie eventu');
+    else check(await withTimeout(db().from('live_events').update({ ends_at: new Date().toISOString() }).eq('id', id), 'Zatrzymanie eventu'), 'Zatrzymanie eventu');
+    await loadPublic();
+  },
+  async stopEvent(id) { return this.cancelEvent(id); },
   async news() { return check(await withTimeout(db().from('announcements').select('id,title,body,active,created_at').order('created_at', { ascending: false }).limit(30), 'Ogłoszenia'), 'Ogłoszenia'); },
   async postNews(title, body) {
     check(await withTimeout(db().from('announcements').insert({ title: title.trim(), body: body.trim() }), 'Nowe ogłoszenie'), 'Nowe ogłoszenie');
