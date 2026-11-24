@@ -49,17 +49,18 @@ const toLevel = (P, L) => { while (P.lvl < L) { P.exp = F.expNext(P.lvl); G.addE
   assert(G.abyssBattle() === null, 'bez kluczy brak walki');
 }
 
-// ——— 3) Skrzynia Mityczna: 2000 💎, min. legendarny, 10% mityczny ———
+// ——— 3) Skrzynia Mityczna: 500 💎, min. legendarny, 20% mityczny ———
 {
   const P = fresh('mage');
-  P.crystals = 1999;
-  assert(G.buyMythicChest() === null && P.crystals === 1999, 'za mało kryształów – brak zakupu');
+  assert(G.MYTHIC_CHEST_COST === 500 && G.MYTHIC_CHANCE === 0.2, 'Skrzynia Mityczna: 500 💎, 20% szansy na mityczny');
+  P.crystals = 499;
+  assert(G.buyMythicChest() === null && P.crystals === 499, 'za mało kryształów – brak zakupu');
   const n = 3000; let myth = 0, low = 0;
   P.crystals = n * G.MYTHIC_CHEST_COST;
   for (let i = 0; i < n; i++) { const it = G.buyMythicChest(); if (it.rarity === MYTHIC) myth++; if (it.rarity < 4) low++; }
   const pct = (myth / n) * 100;
-  assert(P.crystals === 0 && low === 0, 'każda skrzynia kosztuje 2000 💎 i daje co najmniej legendarny');
-  assert(pct > 7.5 && pct < 12.5, `szansa na mityczny ≈ 10% (${pct.toFixed(1)}%)`);
+  assert(P.crystals === 0 && low === 0, 'każda skrzynia kosztuje 500 💎 i daje co najmniej legendarny');
+  assert(pct > 17 && pct < 23, `szansa na mityczny ≈ 20% (${pct.toFixed(1)}%)`);
   assert(P.bag.length === n && P.stats.mythics === myth, 'legendarne/mityczne nie są sprzedawane automatycznie, licznik mitycznych');
   const m = P.bag.find((x) => x.rarity === MYTHIC);
   const l = F.genItem({ lvl: m.lvl, rarity: 4, cls: 'mage', slot: m.slot });

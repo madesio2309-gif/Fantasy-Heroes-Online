@@ -1241,9 +1241,9 @@ export function abyssBattle() {
   return { kind: 'abyss', title: `Otchłań – piętro ${f}`, bg: 'abyss', A, B, sim, win, rew, rightImg: s.img, rightName: s.name, rightLvl: s.L, boss: s.boss };
 }
 
-// ——— Skrzynia Mityczna: 90% legendarny, 10% mityczny ———
-export const MYTHIC_CHEST_COST = 2000;
-export const MYTHIC_CHANCE = 0.1;
+// ——— Skrzynia Mityczna: 80% legendarny, 20% mityczny (sklep i pole koła fortuny) ———
+export const MYTHIC_CHEST_COST = 500;
+export const MYTHIC_CHANCE = 0.2;
 function openMythicChest(rnd = R) {
   const it = genItem({ lvl: P.lvl, rarity: rnd() < MYTHIC_CHANCE ? MYTHIC : 4, cls: P.cls });
   addItem(it);

@@ -111,7 +111,7 @@ export function openShop(app, tab = 'items') {
         h('div', { class: 'cshop' },
           h('div', { class: 'citem vipc' }, h('div', { class: 'vip-crown-big' }, '👑'), h('b', {}, 'VIP'), h('div', { class: 'muted' }, G.isVip() ? `Aktywny do ${new Date(G.vipUntil()).toLocaleDateString('pl-PL')}` : 'Wygoda i kosmetyka – bez przewagi w walce'),
             btn(G.isVip() ? 'Twoje korzyści' : 'Co daje VIP?', () => { m.close(); openVipInfo(app); }, 'small', { id: 'btn-vip-info' })),
-          h('div', { class: 'citem mythic' }, uiIcon('mythicChest', 'big-ico'), h('b', {}, 'Skrzynia Mityczna'), h('div', { class: 'muted' }, `Legendarny przedmiot (90%) lub mityczny (10%) na Twoim poziomie`),
+          h('div', { class: 'citem mythic' }, uiIcon('mythicChest', 'big-ico'), h('b', {}, 'Skrzynia Mityczna'), h('div', { class: 'muted' }, `Legendarny przedmiot (${Math.round((1 - G.MYTHIC_CHANCE) * 100)}%) lub mityczny (${Math.round(G.MYTHIC_CHANCE * 100)}%) na Twoim poziomie`),
             btn(`${fmt(G.MYTHIC_CHEST_COST)} 💎`, () => { const it = G.buyMythicChest(); if (it) { m.close(); showLoot(app, 'Skrzynia Mityczna', it); } }, 'gold small', { id: 'btn-mythic-chest' })),
           h('div', { class: 'citem' }, uiIcon('egg', 'big-ico'), h('b', {}, 'Jajo Peta'), h('div', { class: 'muted' }, `Wykluj peta w zakładce Postać › Pety (masz: ${P.pets.eggs})`),
             btn(`${PET_EGG_COST} 💎`, () => { if (G.buyEgg()) { app.toast('Kupiono jajo peta! Wykluj je w zakładce Postać › Pety.', 'good'); draw(); } }, 'gold small', { id: 'btn-buy-egg' })),

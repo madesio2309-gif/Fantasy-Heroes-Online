@@ -1,6 +1,13 @@
 // Wersja gry i lista zmian (okno „Co nowego” po aktualizacji)
-export const APP_VERSION = '1.8.3';
+export const APP_VERSION = '1.8.4';
 export const CHANGELOG = [
+  {
+    v: '1.8.4', date: '2026-11-26', title: 'Tańsza Skrzynia Mityczna',
+    items: [
+      'Skrzynia Mityczna kosztuje teraz 500 💎 zamiast 2000 💎.',
+      'Szansa na przedmiot mityczny wzrosła z 10% do 20% (dotyczy też Skrzyni Mitycznej z koła fortuny).',
+    ],
+  },
   {
     v: '1.8.3', date: '2026-11-26', title: 'Prezenty od administracji',
     items: [
