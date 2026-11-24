@@ -149,6 +149,14 @@ Decyzje użytkownika: pety = **tylko bonusy pasywne** (widoczne przy bohaterze),
 - UI fingerprint: złoty tusz (`#ffd36b`→`#e0a33a`) z czarnym konturem i twardym cieniem – plakietka VIP jak mała naklejka przy nicku, karta VIP i formularz z lewym złotym paskiem (spójne z wierszami eventów).
 - Weryfikacja: `vip_test` (46 sprawdzeń: korzyści, skórka, synchronizacja, paczki raz na nadanie, odebranie, brak migracji, operacje panelu na atrapie serwera) i `vip_sql_test` (33 sprawdzenia na PGlite: tylko administrator, przedłużanie, limity, RLS odczytu i zapisu także przy pełnych uprawnieniach tabel, odebranie, kasowanie konta) + pełne `npm test`; przeglądarka `.preview/run-010`: brak migracji, nadanie 90 dni z powodem, blokada 400 dni, +30 dni, odebranie z potwierdzeniem, VIP gracza (paczka +300 💎, plecak 40, Idle 16 h, 16 kluczy, okno VIP, skórka na scenie), plakietki w rankingu, komunikat o zakończeniu.
 
+## Aktualizacja 8.3 – prezenty od administracji (wersja 1.8.3)
+- Asset Preparation: brak nowych plików – ikony `icons/ui_*` (złoto, kryształ), 🎁 jako znak tekstowy, istniejące style kart, chipów i wierszy list.
+- Serwer (`supabase/gifts_1.8.3.sql`, także na końcu `schema.sql`): tabela `gifts` (partia, odbiorca, złoto ≤100 mln, kryształy ≤10 000, wiadomość, notatka, odbiór); RLS tylko do odczytu (własne lub administrator); funkcje `admin_send_gift` (wybrani lub wszyscy, maks. 5000), `admin_cancel_gift` (tylko nieodebrane), `admin_gift_history`, `claim_gifts` (raz, podnosi limit strażnika kryształów).
+- Panel 🛡 › 🎁 Prezenty: odbiorcy (wyszukiwarka, „+ Dodaj”, „Dodaj wszystkich z listy”, „Wszyscy gracze” z liczbą kont, przycisk 🎁 przy graczu w zakładce Gracze), kwoty z gotowymi wartościami, wiadomość dla graczy, notatka, podgląd łącznej kwoty, wysyłka z potwierdzeniem (5 s), historia partii z liczbą odebranych i anulowaniem nieodebranych; żółta instrukcja, gdy brak migracji.
+- Gracz: 🎁 z licznikiem na górnym pasku, okno otwiera się samo raz na nowy prezent (poza walką i innymi oknami); „Odbierz wszystko” dodaje dokładne kwoty bez mnożników eventów, blokada podwójnego kliknięcia.
+- UI fingerprint: czerwona naklejka 🎁 na pasku, karta nagłówka z ciepłym gradientem papieru, pozycje z czerwonym, a partie w historii ze złotym lewym paskiem.
+- Weryfikacja: `gift_test` (ponad 45 sprawdzeń: limity, opisy, odbiór dokładny i jednorazowy, blokada, atrapa serwera, brak uprawnień, brak migracji) i `gifts_sql_test` (40 sprawdzeń na PGlite z prawdziwym strażnikiem zapisów) + pełne `npm test`; przeglądarka `.preview/run-011`: baner bez migracji, wybór graczy, potwierdzenie, wysyłka do wszystkich, okno gracza, odbiór +25 000 zł / +10 000 💎, historia, anulowanie 3 nieodebranych.
+
 ## Kryteria ukończenia
 - Kreator postaci (5 klas, wygląd, kolor stroju, aura), hub z animowaną postacią.
 - Walka auto 1v1 10–20 s z animacją, kryty, uniki, umiejętności, przycisk „Pomiń”, porównanie siły.

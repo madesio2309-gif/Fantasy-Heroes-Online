@@ -47,6 +47,15 @@ export class App {
     G.on('levelup', (l, sk) => this.levelUp(l, sk));
     G.on('sfx', (s) => sfx(s));
     G.on('chat', () => { if (this.chatEl) Panels.refreshChat(this); });
+    // nowe prezenty od administratora: okno pokazuje się samo raz na prezent (poza walką i gdy nie ma innego okna)
+    this.giftsShown = new Set();
+    G.on('gifts', (list) => {
+      if (this.game && this.game.isConnected) this.renderTop();
+      const fresh = (list || []).filter((g) => !this.giftsShown.has(g.id));
+      if (!fresh.length || this.inBattle || !G.P || this.root.querySelector('.modal-wrap')) return;
+      fresh.forEach((g) => this.giftsShown.add(g.id));
+      Panels.openGifts(this);
+    });
     Acc.onAcc((t) => { if (t === 'recovery') this.openRecovery(); });
     this.stage.onResize = () => this.placeHero();
     initItemTooltip();
@@ -526,6 +535,7 @@ export class App {
           '⚡ ', ev.short, h('small', {}, ' ' + fmtTime(new Date(e.ends_at).getTime() - Date.now())));
       })) : null,
       h('div', { class: 'tb-res' },
+        G.pendingGifts().length ? h('button', { class: 'res set giftb', id: 'btn-gifts', title: 'Prezenty od administracji – kliknij, aby odebrać', onclick: () => Panels.openGifts(this) }, '🎁 ', h('b', {}, G.pendingGifts().length)) : null,
         G.isVip() ? h('button', { class: 'res set vipb', id: 'btn-vip', title: `VIP do ${new Date(G.vipUntil()).toLocaleString('pl-PL')}`, onclick: () => Panels.openVipInfo(this) }, '👑 VIP') : null,
         h('div', { class: 'res', title: 'Siła postaci' }, uiIcon('swords', 'ico'), h('b', {}, fmt(G.power()))),
         h('div', { class: 'res', title: 'Złoto' }, uiIcon('gold', 'ico'), h('b', {}, fmt(P.gold))),

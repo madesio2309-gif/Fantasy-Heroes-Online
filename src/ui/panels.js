@@ -1,6 +1,7 @@
 // Panele szybkiego dostępu (modale): Idle, Dzienne, Sklep, Wydarzenie, Rankingi, Czat, Ustawienia
 import { h, icon, uiIcon, itemSlotEl, itemDetails, bar, btn, clsBadge, fill, vipTag } from './dom.js';
 import { VIP, VIP_PERKS } from '../data/vip.js';
+import { giftLabel, giftTotals } from '../data/gifts.js';
 import { sfx, setMusic, setSound, getVolumes, setVolume, onVolumeChange } from './audio.js';
 import * as G from '../core/game.js';
 import * as Acc from '../core/accounts.js';
@@ -141,6 +142,38 @@ export function showLoot(app, title, it) {
     h('div', { class: 'loot-tag', style: { background: RARITIES[it.rarity].color } }, big ? '✦ MITYCZNY! ✦' : RARITIES[it.rarity].name),
     itemDetails(it, G.compare(it)),
     btn('Super!', () => m.close(), 'primary')), { cls: 'narrow' });
+  return m;
+}
+
+// ——— Prezenty od administracji (np. nagrody za eventy na Discordzie) ———
+export function openGifts(app) {
+  const body = h('div', { class: 'gifts-box' });
+  let m;
+  const draw = () => {
+    const list = G.pendingGifts();
+    const t = giftTotals(list);
+    fill(body,
+      list.length ? [
+        h('div', { class: 'gift-head' }, h('div', { class: 'gift-ico' }, '🎁'),
+          h('div', {}, h('b', {}, list.length === 1 ? 'Masz prezent od administracji!' : `Masz ${list.length} ${[2, 3, 4].includes(list.length % 10) && ![12, 13, 14].includes(list.length % 100) ? 'prezenty' : 'prezentów'} od administracji!`),
+            h('div', { class: 'gift-total' }, t.gold ? h('span', {}, uiIcon('gold', 'ico'), t.gold.toLocaleString('pl-PL'), ' zł') : null, t.crystals ? h('span', {}, uiIcon('crystal', 'ico'), t.crystals.toLocaleString('pl-PL')) : null))),
+        h('div', { class: 'gift-list' }, list.map((g) => h('div', { class: 'gift-item', 'data-gift': g.id },
+          h('div', { class: 'gift-amt' }, giftLabel(g.gold, g.crystals)),
+          g.message ? h('div', { class: 'gift-msg' }, `„${g.message}”`) : null,
+          h('div', { class: 'muted' }, new Date(g.created_at).toLocaleString('pl-PL', { dateStyle: 'medium', timeStyle: 'short' }))))),
+        btn('Odbierz wszystko', async (e) => {
+          const b = e.currentTarget; b.disabled = true;
+          try {
+            const got = await G.claimGifts();
+            if (got.count) app.toast(`🎁 Odebrano: ${giftLabel(got.gold, got.crystals)}`, 'good');
+            else app.toast('Prezenty zostały już odebrane.', 'bad');
+            m.close();
+          } catch (err) { app.toast(err.message, 'bad'); b.disabled = false; }
+        }, 'primary big', { id: 'btn-claim-gifts' }),
+      ] : h('div', { class: 'muted center' }, 'Nie masz nieodebranych prezentów.'));
+  };
+  draw();
+  m = app.modal('Prezenty', body, { cls: 'narrow' });
   return m;
 }
 

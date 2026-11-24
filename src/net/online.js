@@ -7,6 +7,7 @@ import { RARITIES, SLOTS, TEMPLATE_BY_ID } from '../data/items.js';
 import { PET_BY_ID, PET_MAX_LVL } from '../data/pets.js';
 import { LIVE_EVENTS } from '../data/live.js';
 import { validateSchedule, liveStatus, evStart } from '../core/schedule.js';
+import { validateGift } from '../data/gifts.js';
 
 const CFG_KEY = 'fho_online_cfg';
 const TIMEOUT_MS = 12000;
@@ -26,6 +27,8 @@ export const Net = {
   vip: {}, // id gracza → koniec VIP-a (ms), tylko aktywni
   vipReady: null, // true – tabela VIP na serwerze; false – brak migracji supabase/vip_1.8.2.sql; null – nie sprawdzono
   myVipLog: [], // własne wpisy dziennika VIP (nadania z paczką kryształów)
+  gifts: [], // nieodebrane prezenty od administratora
+  giftsReady: null, // true – tabela prezentów na serwerze; false – brak migracji supabase/gifts_1.8.3.sql
   channel: null,
   lastProfile: 0,
   lastRefresh: 0,
@@ -170,7 +173,50 @@ export async function refresh(week, guildNetId) {
   } else Net.boss.guildOthers = 0;
   await loadPublic();
   await loadVip();
+  await loadGifts();
   emit('refresh');
+}
+
+// ——— Prezenty od administratora (złoto, kryształy) ———
+export const GIFTS_MIGRATION_FILE = 'supabase/gifts_1.8.3.sql';
+export async function loadGifts() {
+  if (!Net.client || !Net.uid) return;
+  const r = await withTimeout(Net.client.from('gifts').select('id,batch,gold,crystals,message,created_at').eq('user_id', Net.uid).is('claimed_at', null).order('created_at', { ascending: true }).limit(50), 'Prezenty');
+  if (r.error && missingRelation(r.error)) {
+    if (Net.giftsReady !== false) console.warn(`Prezenty: na serwerze brakuje tabeli gifts – uruchom ${GIFTS_MIGRATION_FILE} w Supabase › SQL Editor.`);
+    Net.giftsReady = false; Net.gifts = [];
+    emit('gifts');
+    return;
+  }
+  Net.gifts = check(r, 'Prezenty').map((g) => ({ ...g, message: g.message ? cleanText(g.message) : null }));
+  Net.giftsReady = true;
+  emit('gifts');
+}
+// odbiór wszystkich nieodebranych prezentów (serwer oznacza je jako odebrane – tylko raz)
+export async function claimGifts() {
+  if (!Net.client || !Net.uid) throw new Error('Prezenty odbierzesz po połączeniu z serwerem.');
+  const rows = giftCheck(await withTimeout(Net.client.rpc('claim_gifts'), 'Odbiór prezentów'), 'Odbiór prezentów') || [];
+  Net.gifts = [];
+  emit('gifts');
+  return rows;
+}
+const GIFT_ERRORS = [
+  [/NOT_ADMIN/, 'Brak uprawnień administratora.'],
+  [/GIFT_EMPTY/, 'Podaj ilość złota lub kryształów.'],
+  [/GIFT_AMOUNT/, 'Złoto: 0–100 000 000, kryształy: 0–10 000.'],
+  [/GIFT_NO_USERS/, 'Wybierz co najmniej jednego gracza.'],
+  [/GIFT_NO_USER/, 'Któryś z wybranych graczy już nie istnieje – odśwież listę.'],
+  [/GIFT_TOO_MANY/, 'Najwyżej 5000 odbiorców w jednej wysyłce.'],
+  [/NOT_AUTHENTICATED/, 'Zaloguj się, aby odebrać prezent.'],
+];
+function giftCheck(res, label) {
+  if (res.error) {
+    const msg = `${res.error.code || ''} ${res.error.message || res.error}`;
+    if (missingRelation(res.error) || /PGRST202|function .*(admin_send_gift|claim_gifts|admin_cancel_gift|admin_gift_history)/i.test(msg)) throw new Error(`Na serwerze brakuje funkcji prezentów – uruchom ${GIFTS_MIGRATION_FILE} w Supabase › SQL Editor.`);
+    const known = GIFT_ERRORS.find(([re]) => re.test(msg));
+    throw new Error(known ? known[1] : `${label}: ${res.error.message || res.error}`);
+  }
+  return res.data;
 }
 
 // ——— VIP (nadawany przez administratora; status i dziennik tylko z serwera) ———
@@ -338,6 +384,32 @@ export const Admin = {
     let req = db().from('players').select('id,name,cls,lvl,power,abyss,updated_at').order('updated_at', { ascending: false }).limit(30);
     if (q && q.trim()) req = req.ilike('name', `%${q.trim().replace(/[%_]/g, '')}%`);
     return check(await withTimeout(req, 'Gracze'), 'Gracze');
+  },
+  // ——— Prezenty ———
+  async sendGift({ users = [], all = false, gold = 0, crystals = 0, message = '', reason = '' }) {
+    const ids = [...new Set((users || []).filter(Boolean))];
+    const err = validateGift({ gold, crystals, recipients: all ? 1 : ids.length });
+    if (err) throw new Error(err);
+    const r = giftCheck(await withTimeout(db().rpc('admin_send_gift', {
+      p_users: all ? null : ids, p_all: !!all, p_gold: Number(gold) || 0, p_crystals: Number(crystals) || 0,
+      p_message: String(message || '').trim().slice(0, 200) || null, p_reason: String(reason || '').trim().slice(0, 120) || null,
+    }), 'Wysyłka prezentu'), 'Wysyłka prezentu');
+    if (ids.includes(Net.uid) || all) await loadGifts();
+    return r; // { batch, count }
+  },
+  // null – brak migracji na serwerze
+  async giftHistory(limit = 30) {
+    const r = await withTimeout(db().rpc('admin_gift_history', { p_limit: limit }), 'Historia prezentów');
+    if (r.error && (missingRelation(r.error) || /PGRST202/.test(`${r.error.code || ''} ${r.error.message || ''}`))) return null;
+    return giftCheck(r, 'Historia prezentów').map((b) => ({ ...b, gold: Number(b.gold) || 0, crystals: Number(b.crystals) || 0, names: b.names || [] }));
+  },
+  async cancelGift(batch) {
+    return giftCheck(await withTimeout(db().rpc('admin_cancel_gift', { p_batch: batch }), 'Anulowanie prezentu'), 'Anulowanie prezentu');
+  },
+  async playerCount() {
+    const r = await withTimeout(db().from('players').select('id', { count: 'exact', head: true }), 'Liczba graczy');
+    check(r, 'Liczba graczy');
+    return Number(r.count) || 0;
   },
   // ——— VIP ———
   async vipList() {

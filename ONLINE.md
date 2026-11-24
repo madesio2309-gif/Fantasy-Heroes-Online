@@ -72,6 +72,20 @@ zmieniają wyłącznie funkcje `admin_grant_vip` / `admin_revoke_vip` (sprawdzaj
 odczytać (status – wszyscy zalogowani, dziennik – tylko własny). Paczkę kryształów (10 💎 za dzień, maks. 1000)
 wylicza serwer przy nadaniu, a gra odbiera ją raz na nadanie.
 
+## Aktualizacja 1.8.3 – prezenty złota i kryształów (jednorazowo)
+
+1. W panelu Supabase otwórz **SQL Editor → New query**.
+2. Wklej całą zawartość pliku `supabase/gifts_1.8.3.sql` i kliknij **Run** (wynik: „Success. No rows returned”).
+   Plik można uruchamiać wielokrotnie – niczego nie usuwa i nie zmienia istniejących kont ani postaci.
+3. Odśwież grę i otwórz 🛡 › **🎁 Prezenty** – zamiast żółtej informacji o brakującej migracji pojawi się formularz
+   (odbiorcy: wybrani gracze lub „Wszyscy gracze”, złoto 0–100 000 000, kryształy 0–10 000, wiadomość, notatka)
+   oraz historia wysyłek z liczbą odebranych prezentów i anulowaniem nieodebranych.
+
+Prezenty tworzy, anuluje i pokazuje w historii wyłącznie funkcja serwera sprawdzająca `is_admin()`
+(`admin_send_gift`, `admin_cancel_gift`, `admin_gift_history`); tabela `gifts` nie ma żadnych polityk zapisu,
+a gracz widzi tylko własne prezenty. Odbiór (`claim_gifts`) oznacza prezent jako odebrany tylko raz i podnosi limit
+strażnika zapisów o otrzymane kryształy, więc duży prezent nie zostanie uznany za oszustwo.
+
 ## Bezpieczeństwo
 
 - Klucz publiczny (*publishable* / *anon*) jest z założenia jawny i może być w repozytorium – dostęp chronią reguły RLS

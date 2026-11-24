@@ -15,6 +15,7 @@ import { AWAKENINGS, AWAKEN_LEVELS, TRIALS, TRIAL_ATTEMPTS, TRIAL_PHASES, TRIAL_
 import { simulate } from './combat.js';
 import { nextStartOf } from './schedule.js';
 import { VIP } from '../data/vip.js';
+import { giftTotals } from '../data/gifts.js';
 import * as Net from '../net/online.js';
 import { leagueOf, LEAGUES, worldBossInfo } from './world.js';
 
@@ -102,6 +103,8 @@ function migrate8(p) {
   if (p.seenVersion === undefined) p.seenVersion = null;
   // 1.8.2: VIP (stan z serwera zapamiętany lokalnie; odebrane paczki kryształów)
   if (!p.vip) p.vip = { until: 0, claimed: [], active: false, keyDay: null };
+  // 1.8.3: odebrane prezenty od administratora (ochrona przed podwójnym dodaniem)
+  if (!p.gifts) p.gifts = { claimed: [], gold: 0, crystals: 0 };
   return p;
 }
 export function wipe() { localStorage.removeItem(SAVE_KEY); P = null; }
@@ -1434,5 +1437,26 @@ export function syncVip(t = Date.now()) {
   return { was, now, cr, keys };
 }
 Net.onNet((type) => { if (type === 'vip') syncVip(); });
+
+// ——— Prezenty od administratora: złoto i kryształy w dokładnej kwocie (bez mnożników eventów), każdy prezent raz ———
+export const pendingGifts = () => (Net.Net.giftsReady === true ? Net.Net.gifts : []);
+export function applyGifts(rows) {
+  if (!P) return { gold: 0, crystals: 0, count: 0 };
+  const fresh = (rows || []).filter((g) => g && g.id != null && !P.gifts.claimed.includes(g.id));
+  const t = giftTotals(fresh);
+  if (!t.count) return t;
+  P.gold += t.gold;
+  addCrystals(t.crystals);
+  P.gifts.claimed = [...P.gifts.claimed, ...fresh.map((g) => g.id)].slice(-500);
+  P.gifts.gold += t.gold; P.gifts.crystals += t.crystals;
+  save(); emit('change'); emit('sfx', 'coin');
+  return t;
+}
+let claimingGifts = null;
+export function claimGifts() {
+  if (!claimingGifts) claimingGifts = Net.claimGifts().then(applyGifts).finally(() => { claimingGifts = null; });
+  return claimingGifts;
+}
+Net.onNet((type) => { if (type === 'gifts') emit('gifts', pendingGifts()); });
 
 export { calcStats, powerOf, expNext, unlockedSkills, upgradeCost, sellPrice, buyPrice, MAX_UP, BAG_SIZE, goldBase, MAX_LVL, levelCap };

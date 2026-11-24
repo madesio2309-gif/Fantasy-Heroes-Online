@@ -3,6 +3,7 @@ import { h, btn, clsBadge, uiIcon, fill, vipTag } from './dom.js';
 import * as G from '../core/game.js';
 import { LIVE_EVENTS } from '../data/live.js';
 import { VIP_DAY_PRESETS, vipBonusFor } from '../data/vip.js';
+import { GIFT, GIFT_GOLD_PRESETS, GIFT_CRYSTAL_PRESETS, validateGift, giftLabel } from '../data/gifts.js';
 import { fmt } from '../core/util.js';
 import { splitLive, liveStatus, evStart, evEnd, validateSchedule, presetRange, toLocalInput, fromLocalInput, fmtRange, fmtWhen, fmtIn, fmtDuration, timeZoneLabel, ANNOUNCE_DAYS } from '../core/schedule.js';
 import { openProfile } from './profile.js';
@@ -14,7 +15,7 @@ export function openAdmin(app) {
   let tab = 'events';
   const body = h('div', { class: 'admin' });
   const content = h('div', { class: 'admin-body' });
-  const tabs = () => h('div', { class: 'subtabs' }, [['events', 'Eventy'], ['news', 'Ogłoszenia'], ['reports', 'Zgłoszenia'], ['players', 'Gracze'], ['stats', 'Statystyki']]
+  const tabs = () => h('div', { class: 'subtabs' }, [['events', 'Eventy'], ['news', 'Ogłoszenia'], ['reports', 'Zgłoszenia'], ['players', 'Gracze'], ['gifts', '🎁 Prezenty'], ['stats', 'Statystyki']]
     .map(([id, n]) => h('button', { class: 'st' + (tab === id ? ' sel' : ''), 'data-admin-tab': id, onclick: () => { tab = id; draw(); } }, n)));
   const fail = (e) => { console.error('Panel administratora', e); fill(content, h('div', { class: 'arena-empty' }, h('b', {}, 'Błąd panelu administratora'), h('div', { class: 'muted' }, e.message))); };
   const run = (fn, okMsg) => async () => { try { await fn(); if (okMsg) app.toast(okMsg, 'good'); draw(); } catch (e) { app.toast(e.message, 'bad'); } };
@@ -28,6 +29,7 @@ export function openAdmin(app) {
       else if (tab === 'news') await drawNews();
       else if (tab === 'reports') await drawReports();
       else if (tab === 'players') await drawPlayers();
+      else if (tab === 'gifts') await drawGifts();
       else await drawStats();
     } catch (e) { fail(e); }
   }
@@ -201,6 +203,7 @@ export function openAdmin(app) {
         return [h('div', { class: 'lb-row' + (g && g.flagged ? ' flag' : '') + (open ? ' vip-open' : ''), 'data-player': p.id }, clsBadge(p.cls),
           h('span', { class: 'lb-name' }, p.name, vipTag(vu > 0), h('small', { class: 'muted' }, ` poz. ${p.lvl} · siła ${fmt(p.power)} · Otchłań ${p.abyss || 0} · ${when(p.updated_at)}${vu ? ` · VIP do ${fmtWhen(vu)}` : ''}`), g && g.strikes ? h('small', { class: 'flag-tag' }, ` ⚠${g.strikes}`) : null),
           btn(open ? 'Zamknij VIP' : '👑 VIP', () => { vipOpen = open ? null : p.id; drawPlayers().catch(fail); }, (open ? '' : 'ghost ') + 'small', { 'data-vip-open': p.id, type: 'button', disabled: vips === null || undefined, title: vips === null ? 'Najpierw uruchom migrację VIP na serwerze' : 'Nadaj, przedłuż lub odbierz VIP' }),
+          btn('🎁', () => { giftSel.set(p.id, { id: p.id, name: p.name, cls: p.cls, lvl: p.lvl }); giftAll = false; tab = 'gifts'; draw(); }, 'ghost small', { 'data-gift-add': p.id, type: 'button', title: 'Wyślij prezent temu graczowi' }),
           btn('Profil', () => openProfile(app, p.id), 'ghost small'),
           btn('Blokada 24 h', run(() => A().ban(p.id, 24, 'Decyzja administratora'), `Zablokowano czat: ${p.name}`), 'ghost small')),
         open && vips !== null ? vipForm(p, vu) : null];
@@ -260,6 +263,94 @@ export function openAdmin(app) {
       reason, info,
       h('div', { class: 'row gap wrap' }, submit, vu ? confirmBtn('Odbierz VIP', 'Na pewno odebrać?', () => A().revokeVip(p.id, reason.value), `Odebrano VIP: ${p.name}`, { id: 'vip-revoke' }) : null),
       hist);
+  }
+
+  // ——— Prezenty: wybór graczy, kwoty, wiadomość, wysyłka, historia (wszystko sprawdza serwer: is_admin()) ———
+  const giftSel = new Map(); // id → { id, name, cls, lvl }
+  let giftAll = false;
+  let giftQuery = '';
+  const giftDraft = { gold: '', crystals: '', message: '', reason: '' };
+  async function drawGifts(q = giftQuery) {
+    giftQuery = q;
+    const [hist, found, total] = await Promise.all([A().giftHistory(), A().searchPlayers(q), A().playerCount()]);
+    if (hist === null) {
+      fill(content, h('div', { class: 'admin-flagged vip-missing', id: 'gifts-missing' }, h('b', {}, '🎁 Prezenty – na serwerze brakuje tabeli prezentów'),
+        h('div', {}, `Otwórz Supabase › SQL Editor i jednorazowo uruchom zawartość pliku ${G.Net.GIFTS_MIGRATION_FILE}. Do tego czasu wysyłanie prezentów jest wyłączone, a gra działa bez zmian.`)));
+      return;
+    }
+    const recipients = () => (giftAll ? total : giftSel.size);
+    // odbiorcy
+    const mode = h('div', { class: 'gift-mode' },
+      h('button', { type: 'button', class: 'chip' + (giftAll ? '' : ' sel'), id: 'gift-mode-sel', onclick: () => { giftAll = false; drawGifts().catch(fail); } }, `Wybrani gracze (${giftSel.size})`),
+      h('button', { type: 'button', class: 'chip' + (giftAll ? ' sel' : ''), id: 'gift-mode-all', onclick: () => { giftAll = true; drawGifts().catch(fail); } }, `Wszyscy gracze (${fmt(total)})`));
+    const chips = giftAll ? h('div', { class: 'muted' }, `Prezent dostanie każdy gracz z profilem w grze (${fmt(total)}).`)
+      : h('div', { class: 'gift-chips', id: 'gift-chips' }, giftSel.size ? [...giftSel.values()].map((p) => h('span', { class: 'gift-chip', 'data-sel': p.id }, clsBadge(p.cls), ` ${p.name} `, vipTag(G.Net.vipUntil(p.id) > 0),
+        h('button', { type: 'button', class: 'gift-x', title: 'Usuń z odbiorców', 'data-unsel': p.id, onclick: () => { giftSel.delete(p.id); drawGifts().catch(fail); } }, '✕')))
+        : h('span', { class: 'muted' }, 'Nikogo jeszcze nie wybrano – dodaj graczy z listy poniżej albo przyciskiem 🎁 w zakładce Gracze.'),
+        giftSel.size ? btn('Wyczyść', () => { giftSel.clear(); drawGifts().catch(fail); }, 'ghost small', { type: 'button', id: 'gift-clear' }) : null);
+    const inp = h('input', { class: 'inp', id: 'gift-search', placeholder: 'Szukaj gracza po nazwie…', value: q, onkeydown: (e) => { if (e.key === 'Enter') drawGifts(inp.value).catch(fail); } });
+    const results = giftAll ? null : h('div', { class: 'lb small gift-results' }, found.length ? found.map((p) => {
+      const on = giftSel.has(p.id);
+      return h('div', { class: 'lb-row' + (on ? ' me' : '') }, clsBadge(p.cls), h('span', { class: 'lb-name' }, p.name, vipTag(G.Net.vipUntil(p.id) > 0), h('small', { class: 'muted' }, ` poz. ${p.lvl}`)),
+        btn(on ? '✓ Dodany' : '+ Dodaj', () => { if (on) giftSel.delete(p.id); else giftSel.set(p.id, { id: p.id, name: p.name, cls: p.cls, lvl: p.lvl }); drawGifts().catch(fail); }, on ? 'small' : 'ghost small', { type: 'button', 'data-pick': p.id }));
+    }) : h('div', { class: 'muted center' }, 'Brak graczy.'),
+      found.length > 1 ? h('div', { class: 'row center' }, btn(`Dodaj wszystkich z listy (${found.length})`, () => { found.forEach((p) => giftSel.set(p.id, { id: p.id, name: p.name, cls: p.cls, lvl: p.lvl })); drawGifts().catch(fail); }, 'ghost small', { type: 'button', id: 'gift-pick-all' })) : null);
+    // kwoty i treść
+    const num = (id, key, max, ph) => h('input', { type: 'number', class: 'inp', id, min: 0, max, step: 1, placeholder: ph, value: giftDraft[key], oninput: (e) => { giftDraft[key] = e.target.value; upd(); } });
+    const goldInp = num('gift-gold', 'gold', GIFT.maxGold, '0');
+    const crInp = num('gift-crystals', 'crystals', GIFT.maxCrystals, '0');
+    const preset = (key, el, v, label) => h('button', { type: 'button', class: 'chip small', [`data-${key}`]: v, onclick: () => { el.value = v; giftDraft[key] = String(v); upd(); } }, label);
+    const msg = h('input', { class: 'inp', id: 'gift-message', maxlength: GIFT.maxMessage, value: giftDraft.message, placeholder: 'Wiadomość dla graczy (np. Nagroda za event Discord 12.12 – dzięki!)', oninput: (e) => { giftDraft.message = e.target.value; } });
+    const reason = h('input', { class: 'inp', id: 'gift-reason', maxlength: GIFT.maxReason, value: giftDraft.reason, placeholder: 'Notatka dla administracji (widoczna tylko w historii)', oninput: (e) => { giftDraft.reason = e.target.value; } });
+    const info = h('div', { class: 'ev-info', id: 'gift-info', role: 'status' });
+    let armed = null;
+    const send = btn('🎁 Wyślij prezent', async () => {
+      const n = recipients();
+      if (!armed) {
+        send.textContent = `Na pewno wysłać ${n} ${n === 1 ? 'graczowi' : 'graczom'}?`; send.classList.add('gold');
+        armed = setTimeout(() => { armed = null; upd(); }, 5000);
+        return;
+      }
+      clearTimeout(armed); armed = null; send.disabled = true;
+      try {
+        const r = await A().sendGift({ users: [...giftSel.keys()], all: giftAll, gold: giftDraft.gold, crystals: giftDraft.crystals, message: giftDraft.message, reason: giftDraft.reason });
+        app.toast(`🎁 Wysłano ${giftLabel(giftDraft.gold, giftDraft.crystals)} do ${r.count} ${r.count === 1 ? 'gracza' : 'graczy'}.`, 'good');
+        giftSel.clear(); giftAll = false; Object.assign(giftDraft, { gold: '', crystals: '', message: '', reason: '' });
+        drawGifts().catch(fail);
+      } catch (e) { app.toast(e.message, 'bad'); upd(); }
+    }, 'primary', { id: 'gift-send', type: 'button' });
+    function upd() {
+      const n = recipients();
+      const err = validateGift({ gold: giftDraft.gold, crystals: giftDraft.crystals, recipients: n });
+      const blank = !giftDraft.gold && !giftDraft.crystals;
+      info.className = 'ev-info ' + (err ? (blank ? '' : 'bad') : 'ok');
+      const g = Number(giftDraft.gold) || 0, c = Number(giftDraft.crystals) || 0;
+      info.textContent = err || `Każdy z ${fmt(n)} ${n === 1 ? 'odbiorcy' : 'odbiorców'} dostanie ${giftLabel(g, c)}${n > 1 ? ` · łącznie ${giftLabel(g * n, c * n)}` : ''}. Prezent pojawi się w grze przy najbliższym odświeżeniu (do 1 minuty).`;
+      send.disabled = !!err; send.classList.remove('gold');
+      if (!armed) send.textContent = '🎁 Wyślij prezent';
+    }
+    upd();
+    // historia
+    const histView = h('div', { class: 'gift-hist', id: 'gift-hist' }, hist.length ? hist.map((b) => {
+      const open = b.recipients - b.claimed;
+      return h('div', { class: 'gift-batch', 'data-batch': b.batch },
+        h('div', { class: 'gift-batch-h' }, h('b', {}, giftLabel(b.gold, b.crystals)), h('span', { class: 'muted' }, when(b.created_at)),
+          h('span', { class: 'gift-claimed' + (open ? '' : ' all') }, `odebrało ${b.claimed}/${b.recipients}`)),
+        b.message ? h('div', { class: 'gift-msg' }, `„${b.message}”`) : null,
+        h('div', { class: 'muted' }, `Odbiorcy: ${b.names.join(', ')}${b.recipients > b.names.length ? ` i ${b.recipients - b.names.length} innych` : ''}${b.reason ? ` · ${b.reason}` : ''}`),
+        open ? h('div', { class: 'row gap' }, confirmBtn(`Anuluj nieodebrane (${open})`, 'Na pewno anulować?', () => A().cancelGift(b.batch), `Anulowano ${open} nieodebranych prezentów.`, { 'data-cancel-batch': b.batch })) : null);
+    }) : h('div', { class: 'muted center' }, 'Jeszcze nic nie wysłano.'));
+    fill(content,
+      h('div', { class: 'gift-form', id: 'gift-form' },
+        h('div', { class: 'sec-head' }, h('h4', {}, '1. Odbiorcy')), mode, chips,
+        giftAll ? null : h('div', { class: 'row gap' }, inp, btn('Szukaj', () => drawGifts(inp.value).catch(fail), 'small', { type: 'button' })), results,
+        h('div', { class: 'sec-head' }, h('h4', {}, '2. Prezent')),
+        h('div', { class: 'gift-amounts' },
+          h('label', { class: 'lbl', for: 'gift-gold' }, uiIcon('gold', 'ico'), ' Złoto'), goldInp, h('div', { class: 'gift-presets' }, GIFT_GOLD_PRESETS.map((v) => preset('gold', goldInp, v, giftLabel(v, 0)))),
+          h('label', { class: 'lbl', for: 'gift-crystals' }, uiIcon('crystal', 'ico'), ' Kryształy'), crInp, h('div', { class: 'gift-presets' }, GIFT_CRYSTAL_PRESETS.map((v) => preset('crystals', crInp, v, `${v} 💎`)))),
+        msg, reason, info, h('div', { class: 'row gap' }, send)),
+      h('div', { class: 'sec-head' }, h('h4', {}, `Historia wysyłek (${hist.length})`)), histView,
+      h('div', { class: 'tip' }, '🔒 Wysyłać, anulować i przeglądać historię może tylko konto administratora – sprawdza to serwer. Gracz odbiera prezent raz; złoto i kryształy trafiają do niego bez mnożników eventów.'));
   }
 
   async function drawStats() {

@@ -1,6 +1,13 @@
 // Wersja gry i lista zmian (okno „Co nowego” po aktualizacji)
-export const APP_VERSION = '1.8.2';
+export const APP_VERSION = '1.8.3';
 export const CHANGELOG = [
+  {
+    v: '1.8.3', date: '2026-11-26', title: 'Prezenty od administracji',
+    items: [
+      'Nagrody za eventy na Discordzie trafiają prosto do gry: złoto i kryształy od administracji czekają pod przyciskiem 🎁 na górnym pasku.',
+      'Prezent odbierasz jednym kliknięciem, dokładnie w wysłanej kwocie i tylko raz – razem z wiadomością od twórców.',
+    ],
+  },
   {
     v: '1.8.2', date: '2026-11-25', title: 'VIP',
     items: [
